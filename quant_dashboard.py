@@ -54,7 +54,7 @@ st.sidebar.markdown("---")
 st.sidebar.caption("© 2026 **Rommy Sanjaya**\nAll Rights Reserved.")
 
 # Fungsi untuk Mendapatkan Daftar Ticker Otomatis dari BEI
-@st.cache_data(ttl=86400) # Cache 24 jam agar cepat
+@st.cache_data(ttl=86400) # Cache 24 jam agar loading lebih cepat
 def get_idx_tickers(mode):
     if mode == "20 Saham Utama (Cepat)":
         return [
@@ -75,7 +75,7 @@ def get_idx_tickers(mode):
             else:
                 return tickers[:100] # Top 100 teratas
         except Exception:
-            # Fallback jika koneksi server BEI error
+            # Fallback jika koneksi data bursa bermasalah
             return [
                 'BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK', 'TLKM.JK', 
                 'ASII.JK', 'UNTR.JK', 'AMRT.JK', 'ICBP.JK', 'INDF.JK'
