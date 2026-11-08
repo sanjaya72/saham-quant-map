@@ -1,64 +1,84 @@
 import streamlit as st
-import yfinance as ticker_data
+import yfinance as yf
 import pandas as pd
+import numpy as np
 
+# Konfigurasi Halaman
 st.set_page_config(page_title="SAHAM-QUANT-MAP", layout="wide")
 
 st.title("📊 SAHAM-QUANT-MAP: Peta Rekomendasi & Trading Plan")
 st.caption("Sistem Analisis Kuantitatif Presisi (Model Saham Akademi)")
 
-# Sidebar Filter
+# Sidebar Parameter
 st.sidebar.header("Filter Parameter")
-min_val = st.sidebar.number_input("Minimum Value (IDR)", value=5000000000, step=1000000000)
+min_value_input = st.sidebar.number_input("Minimum Value (IDR)", value=0, step=100000000)
 
-tickers = ["PANI.JK", "BUMI.JK", "ENRG.JK", "RAJA.JK", "DEWA.JK", "TMPO.JK", "BBRI.JK", "TLKM.JK"]
+# Daftar Ticker Saham (Daftar Saham Likuid Indonesia / IHSG)
+TICKERS = [
+    'BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK', 'TLKM.JK', 
+    'ASII.JK', 'UNTR.JK', 'AMRT.JK', 'ICBP.JK', 'INDF.JK',
+    'CPIN.JK', 'ADRO.JK', 'PTBA.JK', 'PGAS.JK', 'MEDC.JK',
+    'KLBF.JK', 'MDKA.JK', 'ANTM.JK', 'INCO.JK', 'BRIS.JK'
+]
 
-def analyze_stock(symbol):
-    try:
-        df = ticker_data.download(symbol, period="1y", interval="1d", progress=False)
-        if df.empty or len(df) < 50: return None
-        
-        last_price = float(df['Close'].iloc[-1])
-        volume_today = float(df['Volume'].iloc[-1])
-        val_today = last_price * volume_today
-        
-        # 1. Filter Min Value
-        if val_today < min_val: return None
-        
-        # 2. Hitung Modus Price (37 Hari)
-        recent_prices = df['Close'].tail(37).round()
-        modus_price = float(recent_prices.mode().iloc[0]) if not recent_prices.empty else last_price
-        
-        # 3. Filter Trend (SMA 20)
-        sma20 = float(df['Close'].rolling(20).mean().iloc[-1])
-        trend = "UPTREND" if last_price > sma20 else "DOWNTREND"
-        
-        # 4. Deteksi CH10 & Max Break (200 Hari / High Historis)
-        high_200 = float(df['High'].tail(200).max())
-        close_to_high = ((high_200 - last_price) / last_price) * 100
-        is_max_break = "YES" if last_price >= high_200 else "NO"
-        
-        # Penilaian 4 Syarat (Kandidat Valid jika UPTREND & Min Value Terpenuhi)
-        status_kandidat = "✅ VALID OPEN TRADE" if trend == "UPTREND" else "❌ SKIP (DOWNTREND)"
-        
-        return {
-            "Stock": symbol.replace(".JK", ""),
-            "Close to High (%)": f"{close_to_high:.2f}%",
-            "Max Break": is_max_break,
-            "Trend": trend,
-            "Last Price": int(last_price),
-            "Modus Price (37D)": int(modus_price),
-            "Status Kandidat": status_kandidat
-        }
-    except Exception as e:
-        return None
+def fetch_stock_data():
+    data_list = []
+    for ticker in TICKERS:
+        try:
+            stock = yf.Ticker(ticker)
+            df = stock.history(period="60d")
+            if len(df) >= 20:
+                # Kalkulasi Indikator Teknikal
+                close = df['Close'].iloc[-1]
+                prev_close = df['Close'].iloc[-2]
+                ma20 = df['Close'].rolling(20).mean().iloc[-1]
+                ma50 = df['Close'].rolling(50).mean().iloc[-1] if len(df) >= 50 else ma20
+                volume = df['Volume'].iloc[-1]
+                avg_volume = df['Volume'].rolling(20).mean().iloc[-1]
+                value = close * volume
 
+                # Syarat Teknikal 4-Filter
+                c1_uptrend = close > ma20
+                c2_ma_cross = ma20 >= ma50
+                c3_vol_spike = volume > avg_volume
+                c4_positive_day = close > prev_close
+                
+                # Menghitung berapa syarat yang terpenuhi (0-4)
+                score = sum([c1_uptrend, c2_ma_cross, c3_vol_spike, c4_positive_day])
+
+                data_list.append({
+                    'Ticker': ticker.replace('.JK', ''),
+                    'Harga': close,
+                    'MA20': round(ma20, 2),
+                    'Value (IDR)': value,
+                    'Syarat Lolos': score,
+                    'Status 4-Syarat': (score == 4)
+                })
+        except Exception:
+            continue
+    return pd.DataFrame(data_list)
+
+# Tombol Eksekusi
 if st.button("🚀 Tampilkan Peta Rekomendasi (4 Syarat)"):
-    with st.spinner("Memproses Data Kuantitatif BEI..."):
-        results = [data for t in tickers if (data := analyze_stock(t)) is not None]
-        if results:
-            res_df = pd.DataFrame(results)
-            st.subheader(f"RECOMMENDATION MAP (Min Value > Rp {min_val:,.0f})")
-            st.dataframe(res_df, use_container_width=True)
+    with st.spinner("Mengambil data bursa & menganalisis indikator kuantitatif..."):
+        df_result = fetch_stock_data()
+        
+        if not df_result.empty:
+            # Filter berdasarkan Minimum Value dari sidebar
+            df_filtered = df_result[df_result['Value (IDR)'] >= min_value_input]
+            
+            # Filter saham yang meloloskan SEMUA 4 syarat
+            df_strict = df_filtered[df_filtered['Status 4-Syarat'] == True]
+
+            if not df_strict.empty:
+                st.success(f"✅ Ditemukan {len(df_strict)} saham yang memenuhi SEMUA 4 SYARAT teknikal!")
+                st.dataframe(df_strict[['Ticker', 'Harga', 'MA20', 'Value (IDR)', 'Syarat Lolos']], use_container_width=True)
+            else:
+                # FALLBACK LOGIC: Jika 0 saham meloloskan 4 syarat, tampilkan saham terbaik dengan skor tertinggi
+                st.warning("⚠️ Tidak ada saham yang memenuhi 4 syarat sekaligus hari ini.")
+                st.info("💡 Menampilkan daftar saham potensial yang memenuhi syarat terbanyak (3/4 syarat):")
+                
+                df_fallback = df_filtered.sort_values(by=['Syarat Lolos', 'Value (IDR)'], ascending=[False, False]).head(10)
+                st.dataframe(df_fallback[['Ticker', 'Harga', 'MA20', 'Value (IDR)', 'Syarat Lolos']], use_container_width=True)
         else:
-            st.warning("Tidak ada saham yang memenuhi kriteria minimum value.")
+            st.error("Gagal mengambil data dari bursa. Silakan coba beberapa saat lagi.")
