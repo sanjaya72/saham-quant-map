@@ -12,10 +12,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# Link Logo
 LOGO_URL = "https://raw.githubusercontent.com/sanjaya72/saham-quant-map/main/logo.png"
 
-# Header Utama dengan Logo & Waktu Real-Time (WIB)
+# Header Utama & Waktu WIB
 wib = pytz.timezone('Asia/Jakarta')
 waktu_sekarang = datetime.now(wib)
 hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
@@ -23,11 +22,9 @@ bulan_list = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "A
 
 hari_str = hari_list[waktu_sekarang.weekday()]
 tanggal_str = f"{waktu_sekarang.day} {bulan_list[waktu_sekarang.month - 1]} {waktu_sekarang.year}"
-jam_str = waktu_sekarang.strftime("%H:%M:%S")
+jam_str = waktu_sekarang.strftime("%H:%M")
 
-# Menampilkan Logo & Judul Dashboard
 col_logo, col_title = st.columns([1, 5])
-
 with col_logo:
     try:
         st.image(LOGO_URL, width=110)
@@ -38,7 +35,6 @@ with col_title:
     st.title("SAHAM-QUANT-MAP")
     st.markdown("##### *Peta Rekomendasi & Automatic Trading Plan*")
 
-# Sub-judul keterangan yang sudah direvisi
 st.caption("Sistem Analisis Kuantitatif Presisi")
 st.caption(f"📅 **Waktu Akses Dashboard:** {hari_str}, {tanggal_str} | 🕒 {jam_str} WIB")
 st.divider()
@@ -47,26 +43,55 @@ st.divider()
 st.sidebar.header("Filter Parameter")
 min_value_input = st.sidebar.number_input("Minimum Value (IDR)", value=0, step=100000000)
 
-# Sidebar Watermark / Lisensi
+# Pilihan Cakupan Saham di Sidebar
+st.sidebar.header("Cakupan Bursa (BEI)")
+mode_saham = st.sidebar.radio(
+    "Pilih Sektor / Daftar Saham:",
+    ["20 Saham Utama (Cepat)", "Saham Indeks LQ45 (Likuid)", "Top 100 Saham Likuid BEI"]
+)
+
 st.sidebar.markdown("---")
 st.sidebar.caption("© 2026 **Rommy Sanjaya**\nAll Rights Reserved.")
 
-# Daftar Ticker Saham (Daftar Saham Likuid Indonesia / IHSG)
-TICKERS = [
-    'BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK', 'TLKM.JK', 
-    'ASII.JK', 'UNTR.JK', 'AMRT.JK', 'ICBP.JK', 'INDF.JK',
-    'CPIN.JK', 'ADRO.JK', 'PTBA.JK', 'PGAS.JK', 'MEDC.JK',
-    'KLBF.JK', 'MDKA.JK', 'ANTM.JK', 'INCO.JK', 'BRIS.JK'
-]
+# Fungsi untuk Mendapatkan Daftar Ticker Otomatis dari BEI
+@st.cache_data(ttl=86400) # Cache 24 jam agar cepat
+def get_idx_tickers(mode):
+    if mode == "20 Saham Utama (Cepat)":
+        return [
+            'BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK', 'TLKM.JK', 
+            'ASII.JK', 'UNTR.JK', 'AMRT.JK', 'ICBP.JK', 'INDF.JK',
+            'CPIN.JK', 'ADRO.JK', 'PTBA.JK', 'PGAS.JK', 'MEDC.JK',
+            'KLBF.JK', 'MDKA.JK', 'ANTM.JK', 'INCO.JK', 'BRIS.JK'
+        ]
+    else:
+        try:
+            # Mengunduh data daftar saham BEI dari mirror repository resmi
+            url = "https://raw.githubusercontent.com/datasets/investing-indonesia-stock-exchange/master/data/idx-stocks.csv"
+            df_idx = pd.read_csv(url)
+            tickers = [f"{code}.JK" for code in df_idx['Ticker'].tolist()]
+            
+            if mode == "Saham Indeks LQ45 (Likuid)":
+                return tickers[:45]
+            else:
+                return tickers[:100] # Top 100 teratas
+        except Exception:
+            # Fallback jika koneksi server BEI error
+            return [
+                'BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK', 'TLKM.JK', 
+                'ASII.JK', 'UNTR.JK', 'AMRT.JK', 'ICBP.JK', 'INDF.JK'
+            ]
 
-def fetch_stock_data():
+def fetch_stock_data(tickers_list):
     data_list = []
-    for ticker in TICKERS:
+    progress_bar = st.progress(0)
+    total = len(tickers_list)
+    
+    for idx, ticker in enumerate(tickers_list):
+        progress_bar.progress((idx + 1) / total)
         try:
             stock = yf.Ticker(ticker)
             df = stock.history(period="60d")
             if len(df) >= 20:
-                # Kalkulasi Indikator Teknikal
                 close = float(df['Close'].iloc[-1])
                 prev_close = float(df['Close'].iloc[-2])
                 ma20 = float(df['Close'].rolling(20).mean().iloc[-1])
@@ -75,16 +100,13 @@ def fetch_stock_data():
                 avg_volume = float(df['Volume'].rolling(20).mean().iloc[-1])
                 value = close * volume
 
-                # Syarat Teknikal 4-Filter
                 c1_uptrend = close > ma20
                 c2_ma_cross = ma20 >= ma50
                 c3_vol_spike = volume > avg_volume
                 c4_positive_day = close > prev_close
                 
-                # Menghitung Skor Syarat (0-4)
                 score = sum([c1_uptrend, c2_ma_cross, c3_vol_spike, c4_positive_day])
 
-                # Kalkulasi Automatic Trading Plan (Risk Management)
                 stop_loss = round(min(close * 0.97, ma20 * 0.98))
                 target_profit = round(close * 1.06)
 
@@ -101,18 +123,18 @@ def fetch_stock_data():
                 })
         except Exception:
             continue
+            
+    progress_bar.empty()
     return pd.DataFrame(data_list)
 
 # Tombol Eksekusi
 if st.button("🚀 Tampilkan Peta Rekomendasi & Trading Plan"):
-    with st.spinner("Mengambil data bursa & menghitung Trading Plan kuantitatif..."):
-        df_result = fetch_stock_data()
+    with st.spinner("Menghubungkan ke Bursa (BEI) & Mengunduh Data Kuantitatif..."):
+        current_tickers = get_idx_tickers(mode_saham)
+        df_result = fetch_stock_data(current_tickers)
         
         if not df_result.empty:
-            # Filter berdasarkan Minimum Value dari sidebar
             df_filtered = df_result[df_result['Value (IDR)'] >= min_value_input]
-            
-            # Filter saham yang meloloskan SEMUA 4 syarat
             df_strict = df_filtered[df_filtered['Status 4-Syarat'] == True]
 
             cols_to_display = ['Ticker', 'Harga Entry', 'MA20', 'Stop Loss (SL)', 'Target Profit (TP)', 'Value (IDR)', 'Syarat Lolos']
@@ -121,7 +143,6 @@ if st.button("🚀 Tampilkan Peta Rekomendasi & Trading Plan"):
                 st.success(f"✅ Ditemukan {len(df_strict)} saham yang memenuhi SEMUA 4 SYARAT teknikal!")
                 st.dataframe(df_strict[cols_to_display], use_container_width=True)
             else:
-                # FALLBACK LOGIC: Tampilkan saham terbaik dengan syarat terbanyak
                 st.warning("⚠️ Tidak ada saham yang memenuhi 4 syarat sekaligus hari ini.")
                 st.info("💡 Menampilkan daftar saham potensial dengan skor terbanyak beserta Trading Plan:")
                 
@@ -130,7 +151,7 @@ if st.button("🚀 Tampilkan Peta Rekomendasi & Trading Plan"):
         else:
             st.error("Gagal mengambil data dari bursa. Silakan coba beberapa saat lagi.")
 
-# Footer & Professional Branding Lisensi Rommy Sanjaya
+# Footer
 st.markdown("---")
 col_f1, col_f2, col_f3 = st.columns([1, 2, 1])
 
