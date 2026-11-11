@@ -3,164 +3,184 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import pytz
 
-# Konfigurasi Halaman
+# -----------------------------------------------------------------------------
+# 1. KONFIGURASI HALAMAN & STREAMLIT UI
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="SAHAM-QUANT-MAP", 
+    page_title="SAHAM-QUANT-MAP",
     page_icon="📈",
     layout="wide"
 )
 
-LOGO_URL = "https://raw.githubusercontent.com/sanjaya72/saham-quant-map/main/logo.png"
+st.title("📊 SAHAM-QUANT-MAP: Sistem Analisis Kuantitatif Presisi")
+st.caption("Designed & Developed for Quantitative Trading | Licensed to **Rommy Sanjaya**")
 
-# Header Utama & Waktu WIB
-wib = pytz.timezone('Asia/Jakarta')
-waktu_sekarang = datetime.now(wib)
-hari_list = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
-bulan_list = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+# -----------------------------------------------------------------------------
+# 2. SIDEBAR FILTER & PARAMETER
+# -----------------------------------------------------------------------------
+st.sidebar.header("⚙️ Parameter Filter Kuantitatif")
 
-hari_str = hari_list[waktu_sekarang.weekday()]
-tanggal_str = f"{waktu_sekarang.day} {bulan_list[waktu_sekarang.month - 1]} {waktu_sekarang.year}"
-jam_str = waktu_sekarang.strftime("%H:%M")
-
-col_logo, col_title = st.columns([1, 5])
-with col_logo:
-    try:
-        st.image(LOGO_URL, width=110)
-    except Exception:
-        st.write("📈")
-
-with col_title:
-    st.title("SAHAM-QUANT-MAP")
-    st.markdown("##### *Peta Rekomendasi & Automatic Trading Plan*")
-
-st.caption("Sistem Analisis Kuantitatif Presisi")
-st.caption(f"📅 **Waktu Akses Dashboard:** {hari_str}, {tanggal_str} | 🕒 {jam_str} WIB")
-st.divider()
-
-# Sidebar Parameter
-st.sidebar.header("Filter Parameter")
-min_value_input = st.sidebar.number_input("Minimum Value (IDR)", value=0, step=100000000)
-
-# Pilihan Cakupan Saham di Sidebar
-st.sidebar.header("Cakupan Bursa (BEI)")
-mode_saham = st.sidebar.radio(
-    "Pilih Sektor / Daftar Saham:",
-    ["20 Saham Utama (Cepat)", "Saham Indeks LQ45 (Likuid)", "Top 100 Saham Likuid BEI"]
+# Filter Nominal Value
+min_val = st.sidebar.number_input(
+    "Minimum Daily Value (IDR)", 
+    value=1_000_000_000, 
+    step=500_000_000,
+    help="Hanya menampilkan saham dengan transaksi harian di atas nominal ini."
 )
 
-st.sidebar.markdown("---")
-st.sidebar.caption("© 2026 **Rommy Sanjaya**\nAll Rights Reserved.")
+# Filter Ambang Batas Kenaikan (CH %)
+ch_threshold = st.sidebar.slider(
+    "CH % Threshold (Momentum Spike)", 
+    min_value=5.0, 
+    max_value=15.0, 
+    value=10.0,
+    step=0.5
+)
 
-# Fungsi untuk Mendapatkan Daftar Ticker Otomatis dari BEI
-@st.cache_data(ttl=86400) # Cache 24 jam agar loading lebih cepat
-def get_idx_tickers(mode):
-    if mode == "20 Saham Utama (Cepat)":
-        return [
-            'BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK', 'TLKM.JK', 
-            'ASII.JK', 'UNTR.JK', 'AMRT.JK', 'ICBP.JK', 'INDF.JK',
-            'CPIN.JK', 'ADRO.JK', 'PTBA.JK', 'PGAS.JK', 'MEDC.JK',
-            'KLBF.JK', 'MDKA.JK', 'ANTM.JK', 'INCO.JK', 'BRIS.JK'
-        ]
-    else:
-        try:
-            # Mengunduh data daftar saham BEI dari mirror repository resmi
-            url = "https://raw.githubusercontent.com/datasets/investing-indonesia-stock-exchange/master/data/idx-stocks.csv"
-            df_idx = pd.read_csv(url)
-            tickers = [f"{code}.JK" for code in df_idx['Ticker'].tolist()]
-            
-            if mode == "Saham Indeks LQ45 (Likuid)":
-                return tickers[:45]
-            else:
-                return tickers[:100] # Top 100 teratas
-        except Exception:
-            # Fallback jika koneksi data bursa bermasalah
-            return [
-                'BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK', 'TLKM.JK', 
-                'ASII.JK', 'UNTR.JK', 'AMRT.JK', 'ICBP.JK', 'INDF.JK'
-            ]
+# Target Risk Management
+target_tp = 0.06  # TP 6%
+target_sl = 0.03  # SL 3%
 
-def fetch_stock_data(tickers_list):
-    data_list = []
+# -----------------------------------------------------------------------------
+# 3. DAFTAR TICKER TOP 100 IDX / LQ45 (DYNAMIC SCANNING)
+# -----------------------------------------------------------------------------
+TICKERS_BEI = [
+    "ACES", "ADRO", "AKRA", "AMRT", "ANTM", "ARTO", "ASII", "BBCA", "BBNI", "BBRI",
+    "BBTN", "BMRI", "BRIS", "BRPT", "BUKA", "CPIN", "EMTK", "ESSA", "EXCL", "GOTO",
+    "HRUM", "ICBP", "INKP", "INDF", "INTP", "ITMG", "KLBF", "MDKA", "MEDC", "MIKA",
+    "MNCN", "PGAS", "PTBA", "PANI", "SIDO", "SMGR", "SRTG", "TBIG", "TPIA", "TLKM",
+    "TOWR", "UNVR", "UNTR", "MNC_NO_REDUNDANT", "MBMA", "AMMN", "BREN", "CUAN"
+]
+# Clean up duplicate tickers
+TICKERS_BEI = list(set([t for t in TICKERS_BEI if t != "MNC_NO_REDUNDANT"]))
+
+# -----------------------------------------------------------------------------
+# 4. FUNSI UTAMA SCANNER & ANALISIS HISTORIS 200 HARI
+# -----------------------------------------------------------------------------
+def analyze_quant_stocks(ticker_list, min_value, ch_limit):
+    results = []
     progress_bar = st.progress(0)
-    total = len(tickers_list)
+    status_text = st.empty()
     
-    for idx, ticker in enumerate(tickers_list):
-        progress_bar.progress((idx + 1) / total)
+    total_tickers = len(ticker_list)
+    
+    for idx, ticker in enumerate(ticker_list):
+        status_text.text(f"Memindai & Mengalkulasi [{idx+1}/{total_tickers}]: {ticker}.JK ...")
+        progress_bar.progress((idx + 1) / total_tickers)
+        
         try:
-            stock = yf.Ticker(ticker)
-            df = stock.history(period="60d")
-            if len(df) >= 20:
-                close = float(df['Close'].iloc[-1])
-                prev_close = float(df['Close'].iloc[-2])
-                ma20 = float(df['Close'].rolling(20).mean().iloc[-1])
-                ma50 = float(df['Close'].rolling(50).mean().iloc[-1]) if len(df) >= 50 else ma20
-                volume = float(df['Volume'].iloc[-1])
-                avg_volume = float(df['Volume'].rolling(20).mean().iloc[-1])
-                value = close * volume
-
-                c1_uptrend = close > ma20
-                c2_ma_cross = ma20 >= ma50
-                c3_vol_spike = volume > avg_volume
-                c4_positive_day = close > prev_close
+            # Download data 1 tahun (200+ hari bursa)
+            df = yf.download(f"{ticker}.JK", period="1y", interval="1d", progress=False)
+            
+            if len(df) < 200:
+                continue
                 
-                score = sum([c1_uptrend, c2_ma_cross, c3_vol_spike, c4_positive_day])
-
-                stop_loss = round(min(close * 0.97, ma20 * 0.98))
-                target_profit = round(close * 1.06)
-
-                data_list.append({
-                    'Ticker': ticker.replace('.JK', ''),
-                    'Harga Entry': round(close),
-                    'MA20': round(ma20, 2),
-                    'Stop Loss (SL)': stop_loss,
-                    'Target Profit (TP)': target_profit,
-                    'Value (IDR)': round(value),
-                    'Syarat Lolos': f"{score}/4",
-                    'Score_Num': score,
-                    'Status 4-Syarat': (score == 4)
+            # Handle MultiIndex columns jika ada dari yfinance
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+                
+            # Hitung Indikator Teknikal Dasar
+            df['Pct_Change'] = df['Close'].pct_change() * 100
+            df['MA20'] = df['Close'].rolling(20).mean()
+            df['MA50'] = df['Close'].rolling(50).mean()
+            df['Avg_Vol20'] = df['Volume'].rolling(20).mean()
+            
+            # Data Hari Ini & Kemarin
+            today = df.iloc[-1]
+            prev = df.iloc[-2]
+            
+            # Evaluasi 4 Syarat Teknikal Utama
+            c1 = today['Close'] > today['MA20']
+            c2 = today['MA20'] >= today['MA50']
+            c3 = today['Volume'] > today['Avg_Vol20']
+            c4 = today['Close'] > prev['Close']
+            
+            score_count = sum([c1, c2, c3, c4])
+            
+            # Kalkulasi Matrik Lanjut 200 Hari Bursa
+            df_200 = df.tail(200).copy()
+            ch_count = (df_200['Pct_Change'] >= ch_limit).sum()
+            
+            # Hitung SRC Hz (Success Rate Continuation)
+            ch_indices = df_200[df_200['Pct_Change'] >= ch_limit].index
+            success_count = 0
+            
+            for ch_idx in ch_indices:
+                loc = df_200.index.get_loc(ch_idx)
+                if loc < len(df_200) - 1:
+                    if df_200.iloc[loc + 1]['Pct_Change'] > 0:
+                        success_count += 1
+                        
+            src_hz = (success_count / ch_count * 100) if ch_count > 0 else 0.0
+            
+            # Perhitungan Finansial & Trading Plan
+            entry_price = float(today['Close'])
+            total_value = float(entry_price * today['Volume'])
+            trend_direction = "Uptrend" if today['MA20'] > today['MA50'] else "Downtrend"
+            
+            # Filter Nominal Transaksi Minimal
+            if total_value >= min_value:
+                results.append({
+                    "Ticker": ticker,
+                    "Harga Entry": int(entry_price),
+                    "Change Hari Ini (%)": round(float(today['Pct_Change']), 2),
+                    "Syarat Lolos": score_count,
+                    "Lolos 4/4": "YA" if score_count == 4 else "TIDAK",
+                    "Frekuensi CH>10% (200D)": int(ch_count),
+                    "SRC Hz (%)": f"{round(src_hz, 1)}%",
+                    "Arah Tren": trend_direction,
+                    "Target Profit (6%)": int(entry_price * (1 + target_tp)),
+                    "Stop Loss (3%)": int(entry_price * (1 - target_sl)),
+                    "Value (IDR)": int(total_value)
                 })
         except Exception:
             continue
             
     progress_bar.empty()
-    return pd.DataFrame(data_list)
+    status_text.empty()
+    
+    return pd.DataFrame(results)
 
-# Tombol Eksekusi
-if st.button("🚀 Tampilkan Peta Rekomendasi & Trading Plan"):
-    with st.spinner("Menghubungkan ke Bursa (BEI) & Mengunduh Data Kuantitatif..."):
-        current_tickers = get_idx_tickers(mode_saham)
-        df_result = fetch_stock_data(current_tickers)
+# -----------------------------------------------------------------------------
+# 5. EKSEKUSI PEMINDAIAN & LOGIKA TAMPILAN DASHBOARD
+# -----------------------------------------------------------------------------
+if st.button("🚀 Jalankan Pemindaian Pasar Sekarang"):
+    st.info(f"Memulai pemindaian data real-time BEI pada {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB...")
+    
+    df_result = analyze_quant_stocks(TICKERS_BEI, min_val, ch_threshold)
+    
+    if not df_result.empty:
+        # Pisahkan Hasil 4/4 dan Fallback
+        df_perfect = df_result[df_result['Syarat Lolos'] == 4].sort_values(by="Value (IDR)", ascending=False)
         
-        if not df_result.empty:
-            df_filtered = df_result[df_result['Value (IDR)'] >= min_value_input]
-            df_strict = df_filtered[df_filtered['Status 4-Syarat'] == True]
-
-            cols_to_display = ['Ticker', 'Harga Entry', 'MA20', 'Stop Loss (SL)', 'Target Profit (TP)', 'Value (IDR)', 'Syarat Lolos']
-
-            if not df_strict.empty:
-                st.success(f"✅ Ditemukan {len(df_strict)} saham yang memenuhi SEMUA 4 SYARAT teknikal!")
-                st.dataframe(df_strict[cols_to_display], use_container_width=True)
-            else:
-                st.warning("⚠️ Tidak ada saham yang memenuhi 4 syarat sekaligus hari ini.")
-                st.info("💡 Menampilkan daftar saham potensial dengan skor terbanyak beserta Trading Plan:")
-                
-                df_fallback = df_filtered.sort_values(by=['Score_Num', 'Value (IDR)'], ascending=[False, False]).head(10)
-                st.dataframe(df_fallback[cols_to_display], use_container_width=True)
+        if not df_perfect.empty:
+            st.success(f"🎯 Ditemukan {len(df_perfect)} Saham Memenuhi Kriteria Sempurna (4/4):")
+            
+            # Format Tampilan Tabel Sempurna
+            df_show = df_perfect.copy()
+            df_show['Syarat Lolos'] = df_show['Syarat Lolos'].astype(str) + "/4"
+            st.dataframe(df_show, use_container_width=True)
+            
         else:
-            st.error("Gagal mengambil data dari bursa. Silakan coba beberapa saat lagi.")
+            st.warning("⚠️ Tidak ada ticker yang memenuhi kriteria 4/4 secara penuh hari ini.")
+            st.markdown("### 📋 Fallback Logic: Ticker Terbaik Berdasarkan Skor Terbanyak & Momentum")
+            
+            # Fallback: Urutkan berdasarkan Skor terbanyak, SRC Hz, dan Value
+            df_fallback = df_result.sort_values(
+                by=["Syarat Lolos", "Value (IDR)"], 
+                ascending=[False, False]
+            ).head(10)
+            
+            df_fallback_show = df_fallback.copy()
+            df_fallback_show['Syarat Lolos'] = df_fallback_show['Syarat Lolos'].astype(str) + "/4"
+            st.dataframe(df_fallback_show, use_container_width=True)
+            
+    else:
+        st.error("Tidak ada saham yang sesuai dengan kriteria Minimum Value yang Anda tetapkan. Coba turunkan nilainya di sidebar.")
 
-# Footer
+# -----------------------------------------------------------------------------
+# FOOTER & LISENSI
+# -----------------------------------------------------------------------------
 st.markdown("---")
-col_f1, col_f2, col_f3 = st.columns([1, 2, 1])
-
-with col_f2:
-    st.markdown(
-        "<div style='text-align: center; color: #6c757d; font-size: 13px; line-height: 1.6;'>"
-        "<b>SAHAM-QUANT-MAP DASHBOARD</b><br>"
-        "Designed & Developed for Quantitative Equity Analysis<br>"
-        "Licensed to <b>Rommy Sanjaya</b> | All Rights Reserved © 2026"
-        "</div>", 
-        unsafe_allow_html=True
-    )
+st.markdown("<center><small>SAHAM-QUANT-MAP DASHBOARD | Developed for Rommy Sanjaya | Strictly Controlled Quantitative Model</small></center>", unsafe_allow_html=True)
