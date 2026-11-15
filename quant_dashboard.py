@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # -----------------------------------------------------------------------------
 # 1. KONFIGURASI HALAMAN & STREAMLIT UI
@@ -17,9 +17,25 @@ st.title("📊 SAHAM-QUANT-MAP: Sistem Analisis Kuantitatif Presisi")
 st.caption("Designed & Developed for Quantitative Trading | Licensed to **Rommy Sanjaya**")
 
 # -----------------------------------------------------------------------------
-# 2. SIDEBAR FILTER & PARAMETER
+# 2. DAFTAR TICKER UNIVERSE GABUNGAN (TOP 10 + LQ45 + TOP 100 IDX)
 # -----------------------------------------------------------------------------
-st.sidebar.header("⚙️ Parameter Filter Kuantitatif")
+TICKERS_GABUNGAN = list(set([
+    # Top Market Cap & LQ45 Utama
+    "BBCA", "BBRI", "BMRI", "TLKM", "ASII", "TPIA", "BREN", "AMMN", "ICBP", "BYAN",
+    "ACES", "ADRO", "AKRA", "AMRT", "ANTM", "ARTO", "BBNI", "BBTN", "BRIS", "BRPT",
+    "BUKA", "CPIN", "EMTK", "ESSA", "EXCL", "GOTO", "HRUM", "INKP", "INDF", "INTP",
+    "ITMG", "KLBF", "MDKA", "MEDC", "MIKA", "MNCN", "PGAS", "PTBA", "PANI", "SIDO",
+    "SMGR", "SRTG", "TBIG", "TOWR", "UNVR", "UNTR", "MBMA", "CUAN",
+    # Tambahan Top 100 IDX Likuid
+    "AUTO", "BDMN", "BNGA", "BNLI", "BSDE", "CTRA", "DOID", "ELSA", "ENRG", "ERAA",
+    "HEAL", "IMAS", "INDY", "JPFA", "JRPT", "KAEF", "KPIG", "LPKR", "MAIN", "MAPA",
+    "MAPI", "MYOR", "PWON", "ROTI", "SMRA", "SMSM", "SSMS", "TAPG", "TKIM", "WIFI"
+]))
+
+# -----------------------------------------------------------------------------
+# 3. SIDEBAR FILTER PARAMETER
+# -----------------------------------------------------------------------------
+st.sidebar.header("⚙️ Parameter Kuantitatif")
 
 # Filter Nominal Value
 min_val = st.sidebar.number_input(
@@ -43,20 +59,7 @@ target_tp = 0.06  # TP 6%
 target_sl = 0.03  # SL 3%
 
 # -----------------------------------------------------------------------------
-# 3. DAFTAR TICKER TOP 100 IDX / LQ45 (DYNAMIC SCANNING)
-# -----------------------------------------------------------------------------
-TICKERS_BEI = [
-    "ACES", "ADRO", "AKRA", "AMRT", "ANTM", "ARTO", "ASII", "BBCA", "BBNI", "BBRI",
-    "BBTN", "BMRI", "BRIS", "BRPT", "BUKA", "CPIN", "EMTK", "ESSA", "EXCL", "GOTO",
-    "HRUM", "ICBP", "INKP", "INDF", "INTP", "ITMG", "KLBF", "MDKA", "MEDC", "MIKA",
-    "MNCN", "PGAS", "PTBA", "PANI", "SIDO", "SMGR", "SRTG", "TBIG", "TPIA", "TLKM",
-    "TOWR", "UNVR", "UNTR", "MNC_NO_REDUNDANT", "MBMA", "AMMN", "BREN", "CUAN"
-]
-# Clean up duplicate tickers
-TICKERS_BEI = list(set([t for t in TICKERS_BEI if t != "MNC_NO_REDUNDANT"]))
-
-# -----------------------------------------------------------------------------
-# 4. FUNSI UTAMA SCANNER & ANALISIS HISTORIS 200 HARI
+# 4. FUNGSI UTAMA SCANNER & ANALISIS HISTORIS 200 HARI
 # -----------------------------------------------------------------------------
 def analyze_quant_stocks(ticker_list, min_value, ch_limit):
     results = []
@@ -98,7 +101,7 @@ def analyze_quant_stocks(ticker_list, min_value, ch_limit):
             
             score_count = sum([c1, c2, c3, c4])
             
-            # Kalkulasi Matrik Lanjut 200 Hari Bursa
+            # Kalkulasi Metrik Lanjut 200 Hari Bursa
             df_200 = df.tail(200).copy()
             ch_count = (df_200['Pct_Change'] >= ch_limit).sum()
             
@@ -146,9 +149,11 @@ def analyze_quant_stocks(ticker_list, min_value, ch_limit):
 # 5. EKSEKUSI PEMINDAIAN & LOGIKA TAMPILAN DASHBOARD
 # -----------------------------------------------------------------------------
 if st.button("🚀 Jalankan Pemindaian Pasar Sekarang"):
-    st.info(f"Memulai pemindaian data real-time BEI pada {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB...")
+    # Mengatur waktu tepat sesuai WIB (UTC+7)
+    waktu_wib = datetime.now(timezone(timedelta(hours=7))).strftime('%Y-%m-%d %H:%M:%S')
+    st.info(f"Memulai pemindaian data real-time pada {len(TICKERS_GABUNGAN)} Ticker Saham per {waktu_wib} WIB...")
     
-    df_result = analyze_quant_stocks(TICKERS_BEI, min_val, ch_threshold)
+    df_result = analyze_quant_stocks(TICKERS_GABUNGAN, min_val, ch_threshold)
     
     if not df_result.empty:
         # Pisahkan Hasil 4/4 dan Fallback
@@ -157,7 +162,6 @@ if st.button("🚀 Jalankan Pemindaian Pasar Sekarang"):
         if not df_perfect.empty:
             st.success(f"🎯 Ditemukan {len(df_perfect)} Saham Memenuhi Kriteria Sempurna (4/4):")
             
-            # Format Tampilan Tabel Sempurna
             df_show = df_perfect.copy()
             df_show['Syarat Lolos'] = df_show['Syarat Lolos'].astype(str) + "/4"
             st.dataframe(df_show, use_container_width=True)
@@ -166,7 +170,6 @@ if st.button("🚀 Jalankan Pemindaian Pasar Sekarang"):
             st.warning("⚠️ Tidak ada ticker yang memenuhi kriteria 4/4 secara penuh hari ini.")
             st.markdown("### 📋 Fallback Logic: Ticker Terbaik Berdasarkan Skor Terbanyak & Momentum")
             
-            # Fallback: Urutkan berdasarkan Skor terbanyak, SRC Hz, dan Value
             df_fallback = df_result.sort_values(
                 by=["Syarat Lolos", "Value (IDR)"], 
                 ascending=[False, False]
