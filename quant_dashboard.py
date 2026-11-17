@@ -1,4 +1,4 @@
-import streamlit as st
+ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -100,9 +100,9 @@ def calculate_rsi(series, period=2):
     return 100 - (100 / (1 + rs))
 
 def calc_position_sizing(entry_price, atr_val, sl_mult, tp_mult, modal, max_risk, safe_mult=None):
-    sl_price = max(50, int(entry_price - (atr_val * sl_mult)))
-    tp_price = int(entry_price + (atr_val * tp_mult))
-    safe_price = int(entry_price + (atr_val * safe_mult)) if safe_mult else None
+    sl_price = max(1, int(round(entry_price - (atr_val * sl_mult))))
+    tp_price = int(round(entry_price + (atr_val * tp_mult)))
+    safe_price = int(round(entry_price + (atr_val * safe_mult))) if safe_mult else None
     
     risk_per_lot = max(1, entry_price - sl_price) * 100
     cost_per_lot = entry_price * 100
@@ -157,7 +157,8 @@ def run_unified_scanner(ticker_list):
             atr_val = float(today['ATR14'])
             total_value = float(entry_price * today['Volume'])
             
-            if total_value < min_val or np.isnan(atr_val):
+            # Filter ketat: Abaikan saham papan FCA (< Rp 50) dan transaksi tipis (< min_val)
+            if entry_price < 50 or total_value < min_val or np.isnan(atr_val):
                 continue
                 
             df_200 = df.tail(200).copy()
@@ -186,7 +187,7 @@ def run_unified_scanner(ticker_list):
                 "Ticker": ticker,
                 "Harga Entry": int(entry_price),
                 "Change (%)": round(float(today['Pct_Change']), 2),
-                "ATR 14 (Rp)": int(atr_val),
+                "ATR 14 (Rp)": int(round(atr_val)),
                 "Skor": m_score,
                 "Lolos 4/4": "YA" if m_score == 4 else "TIDAK",
                 "SRC Hz (%)": f"{round(src_hz, 1)}%",
@@ -222,7 +223,7 @@ def run_unified_scanner(ticker_list):
                 "Harga Entry": int(entry_price),
                 "Change (%)": round(float(today['Pct_Change']), 2),
                 "RSI-2": round(float(today['RSI2']), 1),
-                "ATR 14 (Rp)": int(atr_val),
+                "ATR 14 (Rp)": int(round(atr_val)),
                 "Skor": r_score,
                 "Lolos 4/4": "YA" if r_score == 4 else "TIDAK",
                 "Win Rate (200D)": f"{round(win_rev, 1)}%",
@@ -256,9 +257,9 @@ def run_unified_scanner(ticker_list):
             res_intra.append({
                 "Ticker": ticker,
                 "Harga Entry": int(entry_price),
-                "Harga VWAP": int(today['Typical_Price']),
+                "Harga VWAP": int(round(today['Typical_Price'])),
                 "RVOL (x)": round(float(today['RVOL']), 2),
-                "ATR 14 (Rp)": int(atr_val),
+                "ATR 14 (Rp)": int(round(atr_val)),
                 "Skor": i_score,
                 "Lolos 4/4": "YA" if i_score == 4 else "TIDAK",
                 "Win Rate (60D)": f"{round(win_intra, 1)}%",
@@ -341,4 +342,6 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.markdown("<center><small>SAHAM-QUANT-SUITE ALL-IN-ONE | Developed for Rommy Sanjaya | Strictly Controlled ATR Quantitative System</small></center>", unsafe_allow_html=True)
- 
+
+            
+    
