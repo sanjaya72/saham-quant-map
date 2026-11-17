@@ -1,4 +1,4 @@
- import streamlit as st
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -344,4 +344,3 @@ st.markdown("---")
 st.markdown("<center><small>SAHAM-QUANT-SUITE ALL-IN-ONE | Developed for Rommy Sanjaya | Strictly Controlled ATR Quantitative System</small></center>", unsafe_allow_html=True)
 
             
-    
