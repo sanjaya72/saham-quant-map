@@ -73,15 +73,33 @@ with st.sidebar.expander("2️⃣ Setting Quant-Reversion (Oversold)", expanded=
     rev_sl_mult = st.number_input("SL Pengali ATR (Reversion)", 0.5, 3.0, 1.2, 0.1, key="rev_sl")
     rev_tp_mult = st.number_input("TP Pengali ATR (Reversion)", 1.0, 5.0, 2.4, 0.2, key="rev_tp")
 
-with st.sidebar.expander("3️⃣ Setting Quant-Intraday (RVOL+VWAP)", expanded=False):
-    rvol_limit_intra = st.slider("Minimum RVOL (x)", 1.0, 5.0, 1.5, 0.1, key="intra_rvol")
-    intra_sl_mult = st.number_input("SL Pengali ATR (Intraday)", 0.3, 2.0, 0.8, 0.1, key="intra_sl")
-    intra_safe_mult = st.number_input("Profit Aman Pengali ATR", 0.5, 3.0, 1.0, 0.1, key="intra_safe")
-    intra_tp_mult = st.number_input("TP Max Pengali ATR (Intraday)", 1.0, 4.0, 1.8, 0.2, key="intra_tp")
+with st.sidebar.expander("3️⃣ Setting Quant-Intraday (Early Entry)", expanded=True):
+    rvol_limit_intra = st.slider("Minimum RVOL Terkalibrasi (x)", 1.0, 5.0, 1.3, 0.1, key="intra_rvol")
+    max_gain_intra = st.slider("Filter Anti-Pucuk: Max Naik Hari Ini (%)", 1.0, 8.0, 3.0, 0.5, key="intra_max_gain")
+    intra_sl_mult = st.number_input("SL Ketat Pengali ATR", 0.3, 2.0, 0.6, 0.1, key="intra_sl")
+    intra_safe_mult = st.number_input("Profit Aman Pengali ATR (Cepat)", 0.3, 2.5, 0.6, 0.1, key="intra_safe")
+    intra_tp_mult = st.number_input("TP Max Pengali ATR", 0.8, 4.0, 1.5, 0.1, key="intra_tp")
 
 # -----------------------------------------------------------------------------
 # 4. FUNGSI INDIKATOR TEKNIKAL & MESIN PEMINDAI TERPADU (1x TARIK DATA)
 # -----------------------------------------------------------------------------
+def get_intraday_time_factor(now_wib):
+    """Menghitung proporsi waktu bursa BEI yang sudah berjalan (Total ~330 menit/hari)"""
+    if now_wib.weekday() >= 5:
+        return 1.0
+    total_mins = now_wib.hour * 60 + now_wib.minute
+    open_mins = 9 * 60        # 09:00 WIB
+    close_mins = 16 * 60      # 16:00 WIB
+    
+    if total_mins < open_mins or total_mins >= close_mins:
+        return 1.0
+    elapsed = max(20, total_mins - open_mins)
+    if total_mins > 13 * 60 + 30:
+        elapsed -= 90  # Potong jeda istirahat sesi 1-2 (90 menit)
+    elif total_mins > 12 * 60:
+        elapsed = 180  # Saat jam istirahat siang
+    return min(1.0, max(0.10, elapsed / 330.0))
+
 def calculate_atr(df, period=14):
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
@@ -113,11 +131,14 @@ def calc_position_sizing(entry_price, atr_val, sl_mult, tp_mult, modal, max_risk
     
     return sl_price, tp_price, safe_price, lot_label, est_modal
 
-def run_unified_scanner(ticker_list):
+def run_unified_scanner(ticker_list, time_factor):
     res_map, res_rev, res_intra = [], [], []
     progress_bar = st.progress(0)
     status_text = st.empty()
     total_tickers = len(ticker_list)
+    
+    # Minimum value juga menyesuaikan porsi jam bursa berjalan agar pagi hari tetap terjaring
+    adj_min_val = min_val * time_factor
     
     for idx, ticker in enumerate(ticker_list):
         status_text.text(f"Memindai 3 Strategi & ATR [{idx+1}/{total_tickers}]: {ticker}.JK ...")
@@ -125,10 +146,13 @@ def run_unified_scanner(ticker_list):
         
         try:
             df = yf.download(f"{ticker}.JK", period="1y", interval="1d", progress=False)
-            if len(df) < 200:
-                continue
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
+                
+            # Abaikan baris hari baru yang belum ada transaksi (Volume == 0)
+            df = df[df['Volume'] > 0]
+            if len(df) < 200:
+                continue
                 
             # Indikator Umum
             df['Pct_Change'] = df['Close'].pct_change() * 100
@@ -156,9 +180,10 @@ def run_unified_scanner(ticker_list):
             entry_price = float(today['Close'])
             atr_val = float(today['ATR14'])
             total_value = float(entry_price * today['Volume'])
+            pct_chg_today = float(today['Pct_Change'])
             
-            # Filter ketat: Abaikan saham papan FCA (< Rp 50) dan transaksi tipis (< min_val)
-            if entry_price < 50 or total_value < min_val or np.isnan(atr_val):
+            # Filter ketat: Abaikan saham papan FCA (< Rp 50) dan transaksi tipis
+            if entry_price < 50 or total_value < adj_min_val or np.isnan(atr_val):
                 continue
                 
             df_200 = df.tail(200).copy()
@@ -168,7 +193,7 @@ def run_unified_scanner(ticker_list):
             # -----------------------------------------------------------------
             m_c1 = today['Close'] > today['MA20']
             m_c2 = today['MA20'] >= today['MA50']
-            m_c3 = today['Volume'] > today['Avg_Vol20']
+            m_c3 = (today['Volume'] / time_factor) > today['Avg_Vol20']
             m_c4 = today['Close'] > prev['Close']
             m_score = sum([m_c1, m_c2, m_c3, m_c4])
             
@@ -186,7 +211,7 @@ def run_unified_scanner(ticker_list):
             res_map.append({
                 "Ticker": ticker,
                 "Harga Entry": int(entry_price),
-                "Change (%)": round(float(today['Pct_Change']), 2),
+                "Change (%)": round(pct_chg_today, 2),
                 "ATR 14 (Rp)": int(round(atr_val)),
                 "Skor": m_score,
                 "Lolos 4/4": "YA" if m_score == 4 else "TIDAK",
@@ -221,7 +246,7 @@ def run_unified_scanner(ticker_list):
             res_rev.append({
                 "Ticker": ticker,
                 "Harga Entry": int(entry_price),
-                "Change (%)": round(float(today['Pct_Change']), 2),
+                "Change (%)": round(pct_chg_today, 2),
                 "RSI-2": round(float(today['RSI2']), 1),
                 "ATR 14 (Rp)": int(round(atr_val)),
                 "Skor": r_score,
@@ -235,12 +260,15 @@ def run_unified_scanner(ticker_list):
             })
             
             # -----------------------------------------------------------------
-            # C. LOGIKA 3: QUANT-INTRADAY (RVOL + VWAP)
+            # C. LOGIKA 3: QUANT-INTRADAY (EARLY MOMENTUM + ANTI-PUCUK)
             # -----------------------------------------------------------------
-            i_c1 = today['RVOL'] >= rvol_limit_intra
+            adj_rvol = float(today['RVOL']) / time_factor
+            
+            i_c1 = adj_rvol >= rvol_limit_intra
             i_c2 = today['Close'] >= today['Typical_Price']
             i_c3 = today['Close'] > today['VWAP_5D']
-            i_c4 = today['Close'] > today['Open']
+            # Syarat 4: Hijau (Close > Open) DAN belum naik terlalu tajam (<= max_gain_intra)
+            i_c4 = (today['Close'] > today['Open']) and (0 < pct_chg_today <= max_gain_intra)
             i_score = sum([i_c1, i_c2, i_c3, i_c4])
             
             df_60 = df.tail(60).copy()
@@ -254,17 +282,22 @@ def run_unified_scanner(ticker_list):
             
             sl_i, tp_i, safe_i, lot_i, modal_i = calc_position_sizing(entry_price, atr_val, intra_sl_mult, intra_tp_mult, modal_trading, max_risk_idr, intra_safe_mult)
             
+            # Hitung estimasi Net Profit (%) pada target Profit Aman setelah potong fee beli+jual 0.40%
+            gross_safe_pct = ((safe_i - entry_price) / entry_price) * 100
+            net_safe_pct = round(gross_safe_pct - 0.40, 2)
+            
             res_intra.append({
                 "Ticker": ticker,
                 "Harga Entry": int(entry_price),
+                "Change (%)": round(pct_chg_today, 2),
                 "Harga VWAP": int(round(today['Typical_Price'])),
-                "RVOL (x)": round(float(today['RVOL']), 2),
+                "Adj RVOL (x)": round(adj_rvol, 2),
                 "ATR 14 (Rp)": int(round(atr_val)),
                 "Skor": i_score,
                 "Lolos 4/4": "YA" if i_score == 4 else "TIDAK",
-                "Win Rate (60D)": f"{round(win_intra, 1)}%",
                 "Rekomendasi Lot": lot_i,
                 f"Profit Aman ({intra_safe_mult}x)": safe_i,
+                "Net Profit Aman (%)": f"+{net_safe_pct}%" if net_safe_pct > 0 else f"{net_safe_pct}%",
                 f"TP Max ({intra_tp_mult}x)": tp_i,
                 f"SL Ketat ({intra_sl_mult}x)": sl_i,
                 "Modal Terpakai (Rp)": modal_i
@@ -284,16 +317,17 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
     hari_indo = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
     now_wib = datetime.now(timezone(timedelta(hours=7)))
     waktu_lengkap = f"{hari_indo[now_wib.weekday()]}, {now_wib.strftime('%d-%m-%Y %H:%M:%S')} WIB"
+    time_factor = get_intraday_time_factor(now_wib)
     
     st.info(f"Pemindaian Selesai | Modal: **Rp {modal_trading:,.0f}** | Batas Rugi/Trade: **Rp {max_risk_idr:,.0f}** | Waktu: **{waktu_lengkap}**")
     
-    df_map, df_rev, df_intra = run_unified_scanner(TICKERS_GABUNGAN)
+    df_map, df_rev, df_intra = run_unified_scanner(TICKERS_GABUNGAN, time_factor)
     
     if not df_map.empty:
         tab1, tab2, tab3 = st.tabs([
             "📈 1. QUANT-MAP (Breakout)", 
             "🔄 2. QUANT-REVERSION (Oversold)", 
-            "⚡ 3. QUANT-INTRADAY (RVOL+VWAP)"
+            "⚡ 3. QUANT-INTRADAY (Early Momentum)"
         ])
         
         # TAB 1: QUANT-MAP
@@ -324,14 +358,14 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
                 
         # TAB 3: QUANT-INTRADAY
         with tab3:
-            df_i_perf = df_intra[df_intra['Skor'] == 4].sort_values(by="RVOL (x)", ascending=False).copy()
+            df_i_perf = df_intra[df_intra['Skor'] == 4].sort_values(by="Adj RVOL (x)", ascending=False).copy()
             if not df_i_perf.empty:
-                st.success(f"🎯 {len(df_i_perf)} Saham Lolos Sinyal Momentum RVOL + VWAP 4/4:")
+                st.success(f"🎯 {len(df_i_perf)} Saham Lolos Sinyal Early Momentum (Naik ≤ {max_gain_intra}%) 4/4:")
                 df_i_perf['Skor'] = df_i_perf['Skor'].astype(str) + "/4"
                 st.dataframe(df_i_perf, use_container_width=True)
             else:
-                st.warning("⚠️ Belum ada sinyal RVOL + VWAP 4/4 hari ini. Menampilkan Top 10 RVOL Tertinggi:")
-                df_i_fb = df_intra.sort_values(by=["Skor", "RVOL (x)"], ascending=[False, False]).head(10)
+                st.warning("⚠️ Belum ada sinyal Early Momentum 4/4 saat ini. Menampilkan Top 10 Adj RVOL Tertinggi:")
+                df_i_fb = df_intra.sort_values(by=["Skor", "Adj RVOL (x)"], ascending=[False, False]).head(10)
                 df_i_fb['Skor'] = df_i_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_i_fb, use_container_width=True)
     else:
@@ -342,5 +376,3 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.markdown("<center><small>SAHAM-QUANT-SUITE ALL-IN-ONE | Developed for Rommy Sanjaya | Strictly Controlled ATR Quantitative System</small></center>", unsafe_allow_html=True)
-
-            
