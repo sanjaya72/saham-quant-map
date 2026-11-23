@@ -15,13 +15,14 @@ st.set_page_config(
     layout="wide"
 )
 
-# Sembunyikan menu pengembang, tombol deploy, dan ikon GitHub di pojok kanan atas
+# Sembunyikan menu pengembang, tombol deploy, dan ikon GitHub, namun pertahankan tombol Sidebar (>)
 hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
-    header [data-testid="stToolbar"] {display: none !important;}
     .stDeployButton {display: none !important;}
+    [data-testid="stHeaderActionElements"] {display: none !important;}
     footer {visibility: hidden;}
+    header {background: transparent !important;}
     </style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
@@ -598,3 +599,5 @@ if st.session_state["scan_results"] is not None:
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.markdown("<center><small>SAHAM-QUANT-SUITE MASTER EDITION | Core Quantitative Engine | Licensed to Rommy Sanjaya</small></center>", unsafe_allow_html=True)
+
+
