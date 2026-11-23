@@ -2,6 +2,8 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import json
+import os
 from datetime import datetime, timezone, timedelta
 
 # -----------------------------------------------------------------------------
@@ -57,7 +59,7 @@ LOGO_SVG_HEADER = """
 """
 
 st.markdown(LOGO_SVG_HEADER, unsafe_allow_html=True)
-st.caption("3-in-1 Quantitative Trading System | Direct Access Mode | Licensed to **Rommy Sanjaya**")
+st.caption("3-in-1 Quantitative Trading System + Virtual Lab | Direct Access Mode | Licensed to **Rommy Sanjaya**")
 
 # -----------------------------------------------------------------------------
 # 2. DAFTAR TICKER UNIVERSE GABUNGAN (BAKU - TOP 10 + LQ45 + TOP 100 IDX)
@@ -122,7 +124,87 @@ with st.sidebar.expander("3️⃣ Setting Quant-Intraday (Early Entry)", expande
     intra_tp_mult = st.number_input("TP Max Pengali ATR", 0.8, 4.0, 1.5, 0.1, key="intra_tp")
 
 # -----------------------------------------------------------------------------
-# 4. FUNGSI INDIKATOR TEKNIKAL & MESIN PEMINDAI TERPADU (BAKU)
+# 4. DATABASE PAPER TRADING (DIRECT ACCESS)
+# -----------------------------------------------------------------------------
+PAPER_FILE = "paper_trades_direct.json"
+
+def load_paper_db():
+    if os.path.exists(PAPER_FILE):
+        try:
+            with open(PAPER_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "cash" in data:
+                    return data
+        except Exception:
+            pass
+    default_paper = {
+        "initial_capital": int(modal_trading),
+        "cash": int(modal_trading),
+        "positions": [],
+        "history": []
+    }
+    save_paper_db(default_paper)
+    return default_paper
+
+def save_paper_db(db_data):
+    with open(PAPER_FILE, "w") as f:
+        json.dump(db_data, f, indent=2)
+
+def execute_paper_buy(ticker, strategy_name, entry_price, lot_qty, tp_price, sl_price):
+    u_data = load_paper_db()
+    gross_cost = entry_price * lot_qty * 100
+    buy_fee = int(round(gross_cost * 0.0015))
+    total_debit = gross_cost + buy_fee
+    
+    if lot_qty <= 0:
+        return False, "Jumlah lot 0 (modal atau batas risiko tidak mencukupi)."
+    if total_debit > u_data["cash"]:
+        return False, f"Saldo RDN Virtual tidak cukup (Butuh Rp {total_debit:,.0f}, Saldo Rp {u_data['cash']:,.0f})."
+        
+    now_wib = datetime.now(timezone(timedelta(hours=7))).strftime("%d-%m-%Y %H:%M WIB")
+    u_data["cash"] -= total_debit
+    u_data["positions"].append({
+        "id": f"{ticker}_{int(datetime.now().timestamp())}",
+        "ticker": ticker,
+        "strategy": strategy_name,
+        "entry_time": now_wib,
+        "entry_price": int(entry_price),
+        "lot": int(lot_qty),
+        "tp_price": int(tp_price),
+        "sl_price": int(sl_price),
+        "buy_cost": int(total_debit)
+    })
+    save_paper_db(u_data)
+    return True, f"Order Virtual BUY {ticker} ({lot_qty} Lot @ Rp {entry_price:,}) berhasil dicatat!"
+
+def execute_paper_sell(pos_index, exit_price, reason="Manual Close"):
+    u_data = load_paper_db()
+    pos = u_data["positions"].pop(pos_index)
+    
+    gross_proceeds = exit_price * pos["lot"] * 100
+    sell_fee = int(round(gross_proceeds * 0.0025))
+    net_proceeds = gross_proceeds - sell_fee
+    net_pnl = net_proceeds - pos["buy_cost"]
+    pnl_pct = round((net_pnl / pos["buy_cost"]) * 100, 2)
+    
+    now_wib = datetime.now(timezone(timedelta(hours=7))).strftime("%d-%m-%Y %H:%M WIB")
+    u_data["cash"] += net_proceeds
+    u_data["history"].insert(0, {
+        "Ticker": pos["ticker"],
+        "Strategi": pos["strategy"],
+        "Lot": pos["lot"],
+        "Entry (Rp)": pos["entry_price"],
+        "Exit (Rp)": int(exit_price),
+        "Waktu Tutup": now_wib,
+        "Keterangan": reason,
+        "Net P/L (Rp)": int(net_pnl),
+        "Net P/L (%)": f"+{pnl_pct}%" if pnl_pct > 0 else f"{pnl_pct}%"
+    })
+    save_paper_db(u_data)
+    return net_pnl
+
+# -----------------------------------------------------------------------------
+# 5. FUNGSI INDIKATOR TEKNIKAL & MESIN PEMINDAI TERPADU (BAKU)
 # -----------------------------------------------------------------------------
 def get_intraday_time_factor(now_wib):
     if now_wib.weekday() >= 5:
@@ -324,23 +406,39 @@ def run_unified_scanner(ticker_list, time_factor):
     return pd.DataFrame(res_map), pd.DataFrame(res_rev), pd.DataFrame(res_intra)
 
 # -----------------------------------------------------------------------------
-# 5. TOMBOL EKSEKUSI TUNGGAL & TAMPILAN 3 TAB TERPADU (BAKU)
+# 6. TOMBOL EKSEKUSI TUNGGAL & TAMPILAN 4 TAB TERPADU (BAKU + PAPER TRADING)
 # -----------------------------------------------------------------------------
+if "scan_results" not in st.session_state:
+    st.session_state["scan_results"] = None
+
 if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_container_width=True):
     hari_indo = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
     now_wib = datetime.now(timezone(timedelta(hours=7)))
     waktu_lengkap = f"{hari_indo[now_wib.weekday()]}, {now_wib.strftime('%d-%m-%Y %H:%M:%S')} WIB"
     time_factor = get_intraday_time_factor(now_wib)
     
-    st.info(f"Pemindaian Selesai | Modal: **Rp {modal_trading:,.0f}** | Batas Rugi/Trade: **Rp {max_risk_idr:,.0f}** | Waktu: **{waktu_lengkap}**")
-    
     df_map, df_rev, df_intra = run_unified_scanner(TICKERS_GABUNGAN, time_factor)
+    st.session_state["scan_results"] = {
+        "df_map": df_map,
+        "df_rev": df_rev,
+        "df_intra": df_intra,
+        "waktu": waktu_lengkap
+    }
+
+if st.session_state["scan_results"] is not None:
+    res_data = st.session_state["scan_results"]
+    df_map = res_data["df_map"]
+    df_rev = res_data["df_rev"]
+    df_intra = res_data["df_intra"]
+    
+    st.info(f"Pemindaian Selesai | Modal: **Rp {modal_trading:,.0f}** | Batas Rugi/Trade: **Rp {max_risk_idr:,.0f}** | Waktu: **{res_data['waktu']}**")
     
     if not df_map.empty:
-        tab1, tab2, tab3 = st.tabs([
+        tab1, tab2, tab3, tab4 = st.tabs([
             "📈 1. QUANT-MAP (Breakout)", 
             "🔄 2. QUANT-REVERSION (Oversold)", 
-            "⚡ 3. QUANT-INTRADAY (Early Momentum)"
+            "⚡ 3. QUANT-INTRADAY (Early Momentum)",
+            "💼 4. PAPER TRADING (Virtual)"
         ])
         
         with tab1:
@@ -378,6 +476,120 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
                 df_i_fb = df_intra.sort_values(by=["Skor", "Adj RVOL (x)"], ascending=[False, False]).head(10)
                 df_i_fb['Skor'] = df_i_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_i_fb, use_container_width=True)
+                
+        # TAB 4: SIMULASI PAPER TRADING (TERINTEGRASI LANGSUNG)
+        with tab4:
+            u_paper = load_paper_db()
+            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+            invested_val = sum(p["buy_cost"] for p in u_paper["positions"])
+            total_realized = sum(h["Net P/L (Rp)"] for h in u_paper["history"])
+            
+            col_p1.metric("Modal Awal Simulasi", f"Rp {u_paper['initial_capital']:,.0f}")
+            col_p2.metric("Saldo RDN Virtual", f"Rp {u_paper['cash']:,.0f}")
+            col_p3.metric("Dana di Posisi Aktif", f"Rp {invested_val:,.0f}")
+            col_p4.metric("Total Realized P/L", f"Rp {total_realized:+,.0f}")
+            
+            st.markdown("---")
+            st.subheader("⚡ Eksekusi BUY Virtual (Dari Sinyal Lolos 4/4)")
+            
+            kandidat_order = []
+            for _, row in df_map[(df_map['Skor'] == 4) & (df_map['Freq_Raw'] >= min_freq_map)].iterrows():
+                lot_num = int(str(row["Rekomendasi Lot"]).split()[0])
+                if lot_num > 0:
+                    kandidat_order.append({
+                        "label": f"[Quant-Map] {row['Ticker']} | Entry: Rp {row['Harga Entry']:,} | {lot_num} Lot | TP: {row[f'TP ATR ({map_tp_mult}x)']} | SL: {row[f'SL ATR ({map_sl_mult}x)']}",
+                        "ticker": row["Ticker"], "strategy": "Quant-Map", "entry": row["Harga Entry"],
+                        "lot": lot_num, "tp": row[f"TP ATR ({map_tp_mult}x)"], "sl": row[f"SL ATR ({map_sl_mult}x)"]
+                    })
+            for _, row in df_rev[df_rev['Skor'] == 4].iterrows():
+                lot_num = int(str(row["Rekomendasi Lot"]).split()[0])
+                if lot_num > 0:
+                    kandidat_order.append({
+                        "label": f"[Quant-Reversion] {row['Ticker']} | Entry: Rp {row['Harga Entry']:,} | {lot_num} Lot | TP: {row[f'TP ATR ({rev_tp_mult}x)']} | SL: {row[f'SL ATR ({rev_sl_mult}x)']}",
+                        "ticker": row["Ticker"], "strategy": "Quant-Reversion", "entry": row["Harga Entry"],
+                        "lot": lot_num, "tp": row[f"TP ATR ({rev_tp_mult}x)"], "sl": row[f"SL ATR ({rev_sl_mult}x)"]
+                    })
+            for _, row in df_intra[df_intra['Skor'] == 4].iterrows():
+                lot_num = int(str(row["Rekomendasi Lot"]).split()[0])
+                if lot_num > 0:
+                    kandidat_order.append({
+                        "label": f"[Quant-Intraday] {row['Ticker']} | Entry: Rp {row['Harga Entry']:,} | {lot_num} Lot | Profit Aman: {row[f'Profit Aman ({intra_safe_mult}x)']} | SL: {row[f'SL Ketat ({intra_sl_mult}x)']}",
+                        "ticker": row["Ticker"], "strategy": "Quant-Intraday", "entry": row["Harga Entry"],
+                        "lot": lot_num, "tp": row[f"Profit Aman ({intra_safe_mult}x)"], "sl": row[f"SL Ketat ({intra_sl_mult}x)"]
+                    })
+                    
+            if kandidat_order:
+                pilihan_idx = st.selectbox(
+                    "Pilih Saham Lolos Sinyal 4/4:",
+                    range(len(kandidat_order)),
+                    format_func=lambda x: kandidat_order[x]["label"]
+                )
+                if st.button("🟢 Eksekusi BUY Virtual", use_container_width=True):
+                    sel = kandidat_order[pilihan_idx]
+                    ok, msg = execute_paper_buy(sel["ticker"], sel["strategy"], sel["entry"], sel["lot"], sel["tp"], sel["sl"])
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            else:
+                st.info("ℹ️ Belum ada sinyal 4/4 dengan alokasi lot > 0 untuk dieksekusi.")
+                
+            st.markdown("---")
+            st.subheader(f"📂 Posisi Saham Virtual Aktif ({len(u_paper['positions'])})")
+            if st.button("🔄 Cek Harga Live & Auto-TP/SL", use_container_width=True):
+                closed_logs = []
+                for i in range(len(u_paper["positions"]) - 1, -1, -1):
+                    p = u_paper["positions"][i]
+                    try:
+                        live_df = yf.download(f"{p['ticker']}.JK", period="1d", interval="5m", progress=False)
+                        if isinstance(live_df.columns, pd.MultiIndex):
+                            live_df.columns = live_df.columns.get_level_values(0)
+                        if not live_df.empty:
+                            high_p = int(round(float(live_df['High'].max())))
+                            low_p = int(round(float(live_df['Low'].min())))
+                            if high_p >= p["tp_price"]:
+                                pnl = execute_paper_sell(i, p["tp_price"], "Auto-TP Tercapai 🎯")
+                                closed_logs.append(f"🎯 **{p['ticker']}** kena Take Profit @ Rp {p['tp_price']:,} (Net P/L: Rp {pnl:+,.0f})")
+                            elif low_p <= p["sl_price"]:
+                                pnl = execute_paper_sell(i, p["sl_price"], "Auto-SL Terpicu 🛡️")
+                                closed_logs.append(f"🛡️ **{p['ticker']}** kena Stop Loss @ Rp {p['sl_price']:,} (Net P/L: Rp {pnl:+,.0f})")
+                    except Exception:
+                        pass
+                if closed_logs:
+                    for log in closed_logs:
+                        st.info(log)
+                    st.rerun()
+                else:
+                    st.success("✅ Harga live dicek: Belum ada posisi yang menyentuh garis TP maupun SL.")
+                    
+            u_paper = load_paper_db()
+            if u_paper["positions"]:
+                for idx_p, p in enumerate(u_paper["positions"]):
+                    st.markdown(f"**{p['ticker']}** ({p['strategy']}) — Entry: **Rp {p['entry_price']:,}** | **{p['lot']} Lot** | TP: **Rp {p['tp_price']:,}** | SL: **Rp {p['sl_price']:,}**")
+                    if st.button(f"🔴 Tutup Posisi {p['ticker']} @Entry", key=f"sell_{p['id']}"):
+                        execute_paper_sell(idx_p, p["entry_price"], "Tutup Manual")
+                        st.rerun()
+            else:
+                st.caption("Belum ada posisi saham virtual yang sedang terbuka.")
+                
+            st.markdown("---")
+            st.subheader("📜 Jurnal Riwayat Transaksi Selesai")
+            if u_paper["history"]:
+                st.dataframe(pd.DataFrame(u_paper["history"]), use_container_width=True)
+            else:
+                st.caption("Belum ada transaksi yang ditutup.")
+                
+            st.markdown("---")
+            if st.button(f"♻️ Reset Saldo Simulasi ke Modal Sidebar (Rp {modal_trading:,.0f})", use_container_width=True):
+                save_paper_db({
+                    "initial_capital": int(modal_trading),
+                    "cash": int(modal_trading),
+                    "positions": [],
+                    "history": []
+                })
+                st.success(f"✅ Saldo simulasi direset ke Rp {modal_trading:,.0f}!")
+                st.rerun()
     else:
         st.error("Tidak ada saham yang memenuhi filter Minimum Daily Value.")
 
