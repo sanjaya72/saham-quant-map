@@ -5,35 +5,76 @@ import numpy as np
 from datetime import datetime, timezone, timedelta
 
 # -----------------------------------------------------------------------------
-# 1. KONFIGURASI HALAMAN & STREAMLIT UI (RESPONSIF HP & LAPTOP)
+# 1. KONFIGURASI HALAMAN & PROTEKSI TAMPILAN PENGEMBANG
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="SAHAM-QUANT-SUITE (All-in-One)",
-    page_icon="📊",
+    page_title="SAHAM-QUANT-SUITE MASTER",
+    page_icon="📈",
     layout="wide"
 )
 
-st.title("📊 SAHAM-QUANT-SUITE: All-in-One Quantitative Radar & ATR Risk")
-st.caption("3-in-1 Quantitative Trading System (Trend Breakout, Mean Reversion, RVOL+VWAP) | Licensed to **Rommy Sanjaya**")
+# Sembunyikan menu pengembang, tombol deploy, dan ikon GitHub di pojok kanan atas
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    header [data-testid="stToolbar"] {display: none !important;}
+    .stDeployButton {display: none !important;}
+    footer {visibility: hidden;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 2. DAFTAR TICKER UNIVERSE GABUNGAN (TOP 10 + LQ45 + TOP 100 IDX)
+# LOGO SVG PROFESIONAL SAHAM-QUANT-SUITE
+# -----------------------------------------------------------------------------
+LOGO_SVG_HEADER = """
+<div style="display: flex; align-items: center; gap: 16px; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 16px 24px; border-radius: 12px; border-left: 6px solid #10b981; box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin-bottom: 12px;">
+    <svg width="54" height="54" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="64" height="64" rx="14" fill="#064e3b" fill-opacity="0.6" stroke="#10b981" stroke-width="2"/>
+        <line x1="12" y1="48" x2="52" y2="48" stroke="#334155" stroke-width="1.5"/>
+        <line x1="12" y1="32" x2="52" y2="32" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+        <line x1="12" y1="16" x2="52" y2="16" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+        <line x1="18" y1="34" x2="18" y2="46" stroke="#ef4444" stroke-width="2"/>
+        <rect x="15" y="37" width="6" height="6" rx="1" fill="#ef4444"/>
+        <line x1="28" y1="26" x2="28" y2="42" stroke="#10b981" stroke-width="2"/>
+        <rect x="25" y="29" width="6" height="9" rx="1" fill="#10b981"/>
+        <line x1="38" y1="20" x2="38" y2="36" stroke="#10b981" stroke-width="2"/>
+        <rect x="35" y="23" width="6" height="10" rx="1" fill="#10b981"/>
+        <line x1="48" y1="12" x2="48" y2="28" stroke="#34d399" stroke-width="2.5"/>
+        <rect x="45" y="15" width="6" height="10" rx="1" fill="#34d399"/>
+        <path d="M16 42 L28 31 L38 25 L49 13" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M43 13 H49 V19" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div>
+        <div style="font-size: 22px; font-weight: 800; letter-spacing: 0.8px; color: #f8fafc; margin: 0;">
+            SAHAM-QUANT-SUITE <span style="background-color: #10b981; color: #064e3b; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; vertical-align: middle; margin-left: 6px;">MASTER PRO</span>
+        </div>
+        <div style="font-size: 13px; color: #94a3b8; margin-top: 3px;">
+            Algorithmic IDX Scanner &bull; Dynamic ATR Risk Engine &bull; Core Quantitative System
+        </div>
+    </div>
+</div>
+"""
+
+st.markdown(LOGO_SVG_HEADER, unsafe_allow_html=True)
+st.caption("3-in-1 Quantitative Trading System | Direct Access Mode | Licensed to **Rommy Sanjaya**")
+
+# -----------------------------------------------------------------------------
+# 2. DAFTAR TICKER UNIVERSE GABUNGAN (BAKU - TOP 10 + LQ45 + TOP 100 IDX)
 # -----------------------------------------------------------------------------
 TICKERS_GABUNGAN = list(set([
-    # Top Market Cap & LQ45 Utama
     "BBCA", "BBRI", "BMRI", "TLKM", "ASII", "TPIA", "BREN", "AMMN", "ICBP", "BYAN",
     "ACES", "ADRO", "AKRA", "AMRT", "ANTM", "ARTO", "BBNI", "BBTN", "BRIS", "BRPT",
     "BUKA", "CPIN", "EMTK", "ESSA", "EXCL", "GOTO", "HRUM", "INKP", "INDF", "INTP",
     "ITMG", "KLBF", "MDKA", "MEDC", "MIKA", "MNCN", "PGAS", "PTBA", "PANI", "SIDO",
     "SMGR", "SRTG", "TBIG", "TOWR", "UNVR", "UNTR", "MBMA", "CUAN",
-    # Tambahan Top 100 IDX Likuid
     "AUTO", "BDMN", "BNGA", "BNLI", "BSDE", "CTRA", "DOID", "ELSA", "ENRG", "ERAA",
     "HEAL", "IMAS", "INDY", "JPFA", "JRPT", "KAEF", "KPIG", "LPKR", "MAIN", "MAPA",
     "MAPI", "MYOR", "PWON", "ROTI", "SMRA", "SMSM", "SSMS", "TAPG", "TKIM", "WIFI"
 ]))
 
 # -----------------------------------------------------------------------------
-# 3. SIDEBAR GLOBAL: MODAL, ATR RISK MANAGEMENT & FILTER LIKUIDITAS
+# 3. SIDEBAR: PENGATURAN MODAL, ATR RISK & KALIBRASI STRATEGI (BAKU)
 # -----------------------------------------------------------------------------
 st.sidebar.header("💼 Pengaturan Modal & ATR Risk")
 modal_trading = st.sidebar.number_input(
@@ -81,23 +122,22 @@ with st.sidebar.expander("3️⃣ Setting Quant-Intraday (Early Entry)", expande
     intra_tp_mult = st.number_input("TP Max Pengali ATR", 0.8, 4.0, 1.5, 0.1, key="intra_tp")
 
 # -----------------------------------------------------------------------------
-# 4. FUNGSI INDIKATOR TEKNIKAL & MESIN PEMINDAI TERPADU (1x TARIK DATA)
+# 4. FUNGSI INDIKATOR TEKNIKAL & MESIN PEMINDAI TERPADU (BAKU)
 # -----------------------------------------------------------------------------
 def get_intraday_time_factor(now_wib):
-    """Menghitung proporsi waktu bursa BEI yang sudah berjalan (Total ~330 menit/hari)"""
     if now_wib.weekday() >= 5:
         return 1.0
     total_mins = now_wib.hour * 60 + now_wib.minute
-    open_mins = 9 * 60        # 09:00 WIB
-    close_mins = 16 * 60      # 16:00 WIB
+    open_mins = 9 * 60
+    close_mins = 16 * 60
     
     if total_mins < open_mins or total_mins >= close_mins:
         return 1.0
     elapsed = max(20, total_mins - open_mins)
     if total_mins > 13 * 60 + 30:
-        elapsed -= 90  # Potong jeda istirahat sesi 1-2 (90 menit)
+        elapsed -= 90
     elif total_mins > 12 * 60:
-        elapsed = 180  # Saat jam istirahat siang
+        elapsed = 180
     return min(1.0, max(0.10, elapsed / 330.0))
 
 def calculate_atr(df, period=14):
@@ -136,8 +176,6 @@ def run_unified_scanner(ticker_list, time_factor):
     progress_bar = st.progress(0)
     status_text = st.empty()
     total_tickers = len(ticker_list)
-    
-    # Minimum value juga menyesuaikan porsi jam bursa berjalan agar pagi hari tetap terjaring
     adj_min_val = min_val * time_factor
     
     for idx, ticker in enumerate(ticker_list):
@@ -149,27 +187,22 @@ def run_unified_scanner(ticker_list, time_factor):
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
                 
-            # Abaikan baris hari baru yang belum ada transaksi (Volume == 0)
             df = df[df['Volume'] > 0]
             if len(df) < 200:
                 continue
                 
-            # Indikator Umum
             df['Pct_Change'] = df['Close'].pct_change() * 100
             df['ATR14'] = calculate_atr(df, period=14)
             df['Avg_Vol20'] = df['Volume'].rolling(20).mean()
             
-            # Indikator Quant-Map
             df['MA20'] = df['Close'].rolling(20).mean()
             df['MA50'] = df['Close'].rolling(50).mean()
             
-            # Indikator Quant-Reversion
             df['RSI2'] = calculate_rsi(df['Close'], period=2)
             df['MA200'] = df['Close'].rolling(200).mean()
             df['Std20'] = df['Close'].rolling(20).std()
             df['Lower_BB'] = df['MA20'] - (2 * df['Std20'])
             
-            # Indikator Quant-Intraday (RVOL + VWAP)
             df['RVOL'] = df['Volume'] / df['Avg_Vol20']
             df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
             df['VWAP_5D'] = (df['Typical_Price'] * df['Volume']).rolling(5).sum() / df['Volume'].rolling(5).sum()
@@ -182,15 +215,12 @@ def run_unified_scanner(ticker_list, time_factor):
             total_value = float(entry_price * today['Volume'])
             pct_chg_today = float(today['Pct_Change'])
             
-            # Filter ketat: Abaikan saham papan FCA (< Rp 50) dan transaksi tipis
             if entry_price < 50 or total_value < adj_min_val or np.isnan(atr_val):
                 continue
                 
             df_200 = df.tail(200).copy()
             
-            # -----------------------------------------------------------------
-            # A. LOGIKA 1: QUANT-MAP (TREND BREAKOUT)
-            # -----------------------------------------------------------------
+            # A. QUANT-MAP
             m_c1 = today['Close'] > today['MA20']
             m_c2 = today['MA20'] >= today['MA50']
             m_c3 = (today['Volume'] / time_factor) > today['Avg_Vol20']
@@ -224,9 +254,7 @@ def run_unified_scanner(ticker_list, time_factor):
                 "Freq_Raw": freq_spike
             })
             
-            # -----------------------------------------------------------------
-            # B. LOGIKA 2: QUANT-REVERSION (OVERSOLD BOUNCE)
-            # -----------------------------------------------------------------
+            # B. QUANT-REVERSION
             r_c1 = today['Close'] > today['MA200']
             r_c2 = today['RSI2'] <= rsi_limit_rev
             r_c3 = today['Close'] <= (today['Lower_BB'] * 1.01)
@@ -259,30 +287,15 @@ def run_unified_scanner(ticker_list, time_factor):
                 "Modal Terpakai (Rp)": modal_r
             })
             
-            # -----------------------------------------------------------------
-            # C. LOGIKA 3: QUANT-INTRADAY (EARLY MOMENTUM + ANTI-PUCUK)
-            # -----------------------------------------------------------------
+            # C. QUANT-INTRADAY
             adj_rvol = float(today['RVOL']) / time_factor
-            
             i_c1 = adj_rvol >= rvol_limit_intra
             i_c2 = today['Close'] >= today['Typical_Price']
             i_c3 = today['Close'] > today['VWAP_5D']
-            # Syarat 4: Hijau (Close > Open) DAN belum naik terlalu tajam (<= max_gain_intra)
             i_c4 = (today['Close'] > today['Open']) and (0 < pct_chg_today <= max_gain_intra)
             i_score = sum([i_c1, i_c2, i_c3, i_c4])
             
-            df_60 = df.tail(60).copy()
-            rv_idx = df_60[(df_60['RVOL'] >= rvol_limit_intra) & (df_60['Close'] >= df_60['Typical_Price'])].index
-            ft_hits = sum(
-                1 for rv_i in rv_idx 
-                if df_60.index.get_loc(rv_i) < len(df_60) - 1 and 
-                df_60.iloc[df_60.index.get_loc(rv_i)+1]['High'] > df_60.iloc[df_60.index.get_loc(rv_i)]['Close']
-            )
-            win_intra = (ft_hits / len(rv_idx) * 100) if len(rv_idx) > 0 else 0.0
-            
             sl_i, tp_i, safe_i, lot_i, modal_i = calc_position_sizing(entry_price, atr_val, intra_sl_mult, intra_tp_mult, modal_trading, max_risk_idr, intra_safe_mult)
-            
-            # Hitung estimasi Net Profit (%) pada target Profit Aman setelah potong fee beli+jual 0.40%
             gross_safe_pct = ((safe_i - entry_price) / entry_price) * 100
             net_safe_pct = round(gross_safe_pct - 0.40, 2)
             
@@ -311,7 +324,7 @@ def run_unified_scanner(ticker_list, time_factor):
     return pd.DataFrame(res_map), pd.DataFrame(res_rev), pd.DataFrame(res_intra)
 
 # -----------------------------------------------------------------------------
-# 5. TOMBOL EKSEKUSI TUNGGAL & TAMPILAN 3 TAB TERPADU
+# 5. TOMBOL EKSEKUSI TUNGGAL & TAMPILAN 3 TAB TERPADU (BAKU)
 # -----------------------------------------------------------------------------
 if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_container_width=True):
     hari_indo = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
@@ -330,7 +343,6 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
             "⚡ 3. QUANT-INTRADAY (Early Momentum)"
         ])
         
-        # TAB 1: QUANT-MAP
         with tab1:
             df_m_perf = df_map[(df_map['Skor'] == 4) & (df_map['Freq_Raw'] >= min_freq_map)].copy()
             if not df_m_perf.empty:
@@ -343,7 +355,6 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
                 df_m_fb['Skor'] = df_m_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_m_fb, use_container_width=True)
                 
-        # TAB 2: QUANT-REVERSION
         with tab2:
             df_r_perf = df_rev[df_rev['Skor'] == 4].sort_values(by="RSI-2", ascending=True).copy()
             if not df_r_perf.empty:
@@ -356,7 +367,6 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
                 df_r_fb['Skor'] = df_r_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_r_fb, use_container_width=True)
                 
-        # TAB 3: QUANT-INTRADAY
         with tab3:
             df_i_perf = df_intra[df_intra['Skor'] == 4].sort_values(by="Adj RVOL (x)", ascending=False).copy()
             if not df_i_perf.empty:
@@ -375,4 +385,4 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
 # FOOTER & LISENSI
 # -----------------------------------------------------------------------------
 st.markdown("---")
-st.markdown("<center><small>SAHAM-QUANT-SUITE ALL-IN-ONE | Developed for Rommy Sanjaya | Strictly Controlled ATR Quantitative System</small></center>", unsafe_allow_html=True)
+st.markdown("<center><small>SAHAM-QUANT-SUITE MASTER EDITION | Core Quantitative Engine | Licensed to Rommy Sanjaya</small></center>", unsafe_allow_html=True)
