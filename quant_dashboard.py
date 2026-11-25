@@ -15,12 +15,13 @@ st.set_page_config(
     layout="wide"
 )
 
-# Sembunyikan menu pengembang, tombol deploy, dan ikon GitHub, namun pertahankan tombol Sidebar (>)
+# Sembunyikan menu pengembang, tombol deploy, dan ikon GitHub, pertahankan tombol Sidebar (>)
 hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
     .stDeployButton {display: none !important;}
     [data-testid="stHeaderActionElements"] {display: none !important;}
+    [data-testid="stToolbarActions"] {display: none !important;}
     footer {visibility: hidden;}
     header {background: transparent !important;}
     </style>
@@ -77,15 +78,15 @@ TICKERS_GABUNGAN = list(set([
 ]))
 
 # -----------------------------------------------------------------------------
-# 3. SIDEBAR: PENGATURAN MODAL, ATR RISK & KALIBRASI STRATEGI (BAKU)
+# 3. SIDEBAR: PENGATURAN MODAL (DEFAULT 10 JUTA), ATR RISK & STRATEGI (BAKU)
 # -----------------------------------------------------------------------------
 st.sidebar.header("💼 Pengaturan Modal & ATR Risk")
 modal_trading = st.sidebar.number_input(
     "Total Modal Trading (IDR)", 
     min_value=100_000, 
-    value=2_000_000, 
+    value=10_000_000, 
     step=500_000,
-    help="Ubah ke 10.000.000 setelah tahap uji coba Rp 2.000.000 selesai."
+    help="Modal aktif default Rp 10.000.000."
 )
 risk_per_trade_pct = st.sidebar.number_input(
     "Maksimal Risiko per Trade (%)", 
@@ -93,7 +94,7 @@ risk_per_trade_pct = st.sidebar.number_input(
     max_value=5.0, 
     value=1.5, 
     step=0.5,
-    help="Batas kerugian maksimal jika terkena Stop Loss (1.5% dari Rp 2 Juta = Rp 30.000)."
+    help="Batas kerugian maksimal jika terkena Stop Loss (1.5% dari Rp 10 Juta = Rp 150.000)."
 )
 min_val = st.sidebar.number_input(
     "Minimum Daily Value (IDR)", 
@@ -125,16 +126,19 @@ with st.sidebar.expander("3️⃣ Setting Quant-Intraday (Early Entry)", expande
     intra_tp_mult = st.number_input("TP Max Pengali ATR", 0.8, 4.0, 1.5, 0.1, key="intra_tp")
 
 # -----------------------------------------------------------------------------
-# 4. DATABASE PAPER TRADING (DIRECT ACCESS)
+# 4. DATABASE PAPER TRADING + SESSION STATE & BACKUP/RESTORE
 # -----------------------------------------------------------------------------
 PAPER_FILE = "paper_trades_direct.json"
 
 def load_paper_db():
+    if "paper_db_cache" in st.session_state:
+        return st.session_state["paper_db_cache"]
     if os.path.exists(PAPER_FILE):
         try:
             with open(PAPER_FILE, "r") as f:
                 data = json.load(f)
                 if isinstance(data, dict) and "cash" in data:
+                    st.session_state["paper_db_cache"] = data
                     return data
         except Exception:
             pass
@@ -148,8 +152,12 @@ def load_paper_db():
     return default_paper
 
 def save_paper_db(db_data):
-    with open(PAPER_FILE, "w") as f:
-        json.dump(db_data, f, indent=2)
+    st.session_state["paper_db_cache"] = db_data
+    try:
+        with open(PAPER_FILE, "w") as f:
+            json.dump(db_data, f, indent=2)
+    except Exception:
+        pass
 
 def execute_paper_buy(ticker, strategy_name, entry_price, lot_qty, tp_price, sl_price):
     u_data = load_paper_db()
@@ -478,7 +486,7 @@ if st.session_state["scan_results"] is not None:
                 df_i_fb['Skor'] = df_i_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_i_fb, use_container_width=True)
                 
-        # TAB 4: SIMULASI PAPER TRADING (TERINTEGRASI LANGSUNG)
+        # TAB 4: SIMULASI PAPER TRADING + BACKUP/RESTORE ANTI-HILANG
         with tab4:
             u_paper = load_paper_db()
             col_p1, col_p2, col_p3, col_p4 = st.columns(4)
@@ -582,6 +590,29 @@ if st.session_state["scan_results"] is not None:
                 st.caption("Belum ada transaksi yang ditutup.")
                 
             st.markdown("---")
+            st.subheader("💾 Simpan / Pulihkan Catatan Jurnal (Anti-Reset Server)")
+            st.download_button(
+                label="⬇️ Unduh Backup Jurnal & Posisi Aktif (.json)",
+                data=json.dumps(u_paper, indent=2),
+                file_name=f"jurnal_quant_{datetime.now(timezone(timedelta(hours=7))).strftime('%Y%m%d')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+            uploaded_backup = st.file_uploader("⬆️ Pulihkan dari File Backup (.json)", type=["json"])
+            if uploaded_backup is not None:
+                if st.button("📥 Terapkan File Backup Ini", use_container_width=True):
+                    try:
+                        restored = json.load(uploaded_backup)
+                        if "cash" in restored and "positions" in restored:
+                            save_paper_db(restored)
+                            st.success("✅ Seluruh posisi aktif & jurnal riwayat berhasil dipulihkan!")
+                            st.rerun()
+                        else:
+                            st.error("Format file backup tidak sesuai.")
+                    except Exception as e:
+                        st.error(f"Gagal membaca file: {e}")
+
+            st.markdown("---")
             if st.button(f"♻️ Reset Saldo Simulasi ke Modal Sidebar (Rp {modal_trading:,.0f})", use_container_width=True):
                 save_paper_db({
                     "initial_capital": int(modal_trading),
@@ -600,4 +631,5 @@ if st.session_state["scan_results"] is not None:
 st.markdown("---")
 st.markdown("<center><small>SAHAM-QUANT-SUITE MASTER EDITION | Core Quantitative Engine | Licensed to Rommy Sanjaya</small></center>", unsafe_allow_html=True)
 
-
+    
+                                                    
