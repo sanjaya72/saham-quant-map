@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import json
 import os
+import base64
+import zlib
 from datetime import datetime, timezone, timedelta
 
 # -----------------------------------------------------------------------------
@@ -54,14 +56,14 @@ LOGO_SVG_HEADER = """
             SAHAM-QUANT-SUITE <span style="background-color: #10b981; color: #064e3b; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; vertical-align: middle; margin-left: 6px;">MASTER PRO</span>
         </div>
         <div style="font-size: 13px; color: #94a3b8; margin-top: 3px;">
-            Algorithmic IDX Scanner &bull; Dynamic ATR Risk Engine &bull; Core Quantitative System
+            Algorithmic IDX Scanner &bull; Pre-Breakout Resistance Filter &bull; Dynamic ATR Risk
         </div>
     </div>
 </div>
 """
 
 st.markdown(LOGO_SVG_HEADER, unsafe_allow_html=True)
-st.caption("3-in-1 Quantitative Trading System + Virtual Lab | Direct Access Mode | Licensed to **Rommy Sanjaya**")
+st.caption("3-in-1 Quantitative Trading System + Persistent Virtual Lab | Direct Access Mode | Licensed to **Rommy Sanjaya**")
 
 # -----------------------------------------------------------------------------
 # 2. DAFTAR TICKER UNIVERSE GABUNGAN (BAKU - TOP 10 + LQ45 + TOP 100 IDX)
@@ -126,22 +128,57 @@ with st.sidebar.expander("3️⃣ Setting Quant-Intraday (Early Entry)", expande
     intra_tp_mult = st.number_input("TP Max Pengali ATR", 0.8, 4.0, 1.5, 0.1, key="intra_tp")
 
 # -----------------------------------------------------------------------------
-# 4. DATABASE PAPER TRADING + SESSION STATE & BACKUP/RESTORE
+# 4. DATABASE PAPER TRADING PERMANEN (URL STATE + LOCAL FILE + BACKUP)
 # -----------------------------------------------------------------------------
 PAPER_FILE = "paper_trades_direct.json"
 
+def encode_state_to_url(db_data):
+    try:
+        raw_bytes = json.dumps(db_data, separators=(",", ":")).encode("utf-8")
+        compressed = zlib.compress(raw_bytes)
+        b64_str = base64.urlsafe_b64encode(compressed).decode("utf-8")
+        st.query_params["pf"] = b64_str
+    except Exception:
+        pass
+
+def decode_state_from_url():
+    try:
+        if "pf" in st.query_params:
+            b64_str = st.query_params["pf"]
+            compressed = base64.urlsafe_b64decode(b64_str.encode("utf-8"))
+            raw_bytes = zlib.decompress(compressed)
+            data = json.loads(raw_bytes.decode("utf-8"))
+            if isinstance(data, dict) and "cash" in data and "positions" in data:
+                return data
+    except Exception:
+        pass
+    return None
+
 def load_paper_db():
+    # 1. Prioritaskan pembacaan dari URL Browser (Anti-Reset saat server Streamlit tidur)
+    url_data = decode_state_from_url()
+    if url_data is not None:
+        st.session_state["paper_db_cache"] = url_data
+        return url_data
+
+    # 2. Cek memori sesi aktif
     if "paper_db_cache" in st.session_state:
+        encode_state_to_url(st.session_state["paper_db_cache"])
         return st.session_state["paper_db_cache"]
+
+    # 3. Cek file lokal server
     if os.path.exists(PAPER_FILE):
         try:
             with open(PAPER_FILE, "r") as f:
                 data = json.load(f)
                 if isinstance(data, dict) and "cash" in data:
                     st.session_state["paper_db_cache"] = data
+                    encode_state_to_url(data)
                     return data
         except Exception:
             pass
+
+    # 4. Inisialisasi baru default Rp 10.000.000
     default_paper = {
         "initial_capital": int(modal_trading),
         "cash": int(modal_trading),
@@ -153,6 +190,7 @@ def load_paper_db():
 
 def save_paper_db(db_data):
     st.session_state["paper_db_cache"] = db_data
+    encode_state_to_url(db_data)
     try:
         with open(PAPER_FILE, "w") as f:
             json.dump(db_data, f, indent=2)
@@ -213,7 +251,7 @@ def execute_paper_sell(pos_index, exit_price, reason="Manual Close"):
     return net_pnl
 
 # -----------------------------------------------------------------------------
-# 5. FUNGSI INDIKATOR TEKNIKAL & MESIN PEMINDAI TERPADU (BAKU)
+# 5. FUNGSI INDIKATOR TEKNIKAL & MESIN PEMINDAI TERPADU + PRE-BREAKOUT FILTER
 # -----------------------------------------------------------------------------
 def get_intraday_time_factor(now_wib):
     if now_wib.weekday() >= 5:
@@ -270,7 +308,7 @@ def run_unified_scanner(ticker_list, time_factor):
     adj_min_val = min_val * time_factor
     
     for idx, ticker in enumerate(ticker_list):
-        status_text.text(f"Memindai 3 Strategi & ATR [{idx+1}/{total_tickers}]: {ticker}.JK ...")
+        status_text.text(f"Memindai 3 Strategi & Filter Resistance [{idx+1}/{total_tickers}]: {ticker}.JK ...")
         progress_bar.progress((idx + 1) / total_tickers)
         
         try:
@@ -298,6 +336,10 @@ def run_unified_scanner(ticker_list, time_factor):
             df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
             df['VWAP_5D'] = (df['Typical_Price'] * df['Volume']).rolling(5).sum() / df['Volume'].rolling(5).sum()
             
+            # Indikator Struktur Resistance & Anti-Pucuk
+            df['Res_20D'] = df['High'].shift(1).rolling(20).max()
+            df['Gain_3D'] = ((df['Close'] - df['Close'].shift(3)) / df['Close'].shift(3)) * 100
+            
             today = df.iloc[-1]
             prev = df.iloc[-2]
             
@@ -308,14 +350,27 @@ def run_unified_scanner(ticker_list, time_factor):
             
             if entry_price < 50 or total_value < adj_min_val or np.isnan(atr_val):
                 continue
+
+            # Hitung posisi candle & jarak ke Resistance 20 Hari
+            candle_range = max(1.0, float(today['High'] - today['Low']))
+            close_pos = (entry_price - float(today['Low'])) / candle_range
+            res_20d = float(today['Res_20D']) if not np.isnan(today['Res_20D']) else entry_price
+            dist_to_res_pct = ((entry_price - res_20d) / res_20d) * 100
+            gain_3d = float(today['Gain_3D']) if not np.isnan(today['Gain_3D']) else pct_chg_today
+
+            # Gatekeeper Ketat Pre-Breakout (Awal posisi siap tembus resistance, bukan di pucuk)
+            is_pre_breakout_zone = (-2.5 <= dist_to_res_pct <= 1.5)
+            is_not_overextended = (gain_3d <= 4.5)
+            is_strong_close = (close_pos >= 0.70)
+            pass_strict_breakout = is_pre_breakout_zone and is_not_overextended and is_strong_close
                 
             df_200 = df.tail(200).copy()
             
-            # A. QUANT-MAP
+            # A. QUANT-MAP (Diperketat dengan Gatekeeper Pre-Breakout)
             m_c1 = today['Close'] > today['MA20']
             m_c2 = today['MA20'] >= today['MA50']
             m_c3 = (today['Volume'] / time_factor) > today['Avg_Vol20']
-            m_c4 = today['Close'] > prev['Close']
+            m_c4 = (today['Close'] > prev['Close']) and pass_strict_breakout
             m_score = sum([m_c1, m_c2, m_c3, m_c4])
             
             spike_idx = df_200[df_200['Pct_Change'] >= 10.0].index
@@ -333,6 +388,7 @@ def run_unified_scanner(ticker_list, time_factor):
                 "Ticker": ticker,
                 "Harga Entry": int(entry_price),
                 "Change (%)": round(pct_chg_today, 2),
+                "Jarak Res 20D (%)": f"{dist_to_res_pct:+.2f}%",
                 "ATR 14 (Rp)": int(round(atr_val)),
                 "Skor": m_score,
                 "Lolos 4/4": "YA" if m_score == 4 else "TIDAK",
@@ -345,7 +401,7 @@ def run_unified_scanner(ticker_list, time_factor):
                 "Freq_Raw": freq_spike
             })
             
-            # B. QUANT-REVERSION
+            # B. QUANT-REVERSION (BAKU)
             r_c1 = today['Close'] > today['MA200']
             r_c2 = today['RSI2'] <= rsi_limit_rev
             r_c3 = today['Close'] <= (today['Lower_BB'] * 1.01)
@@ -378,12 +434,12 @@ def run_unified_scanner(ticker_list, time_factor):
                 "Modal Terpakai (Rp)": modal_r
             })
             
-            # C. QUANT-INTRADAY
+            # C. QUANT-INTRADAY (Diperketat dengan Zona Siap Resistance, Strong Candle & Trend Alignment)
             adj_rvol = float(today['RVOL']) / time_factor
             i_c1 = adj_rvol >= rvol_limit_intra
-            i_c2 = today['Close'] >= today['Typical_Price']
-            i_c3 = today['Close'] > today['VWAP_5D']
-            i_c4 = (today['Close'] > today['Open']) and (0 < pct_chg_today <= max_gain_intra)
+            i_c2 = (today['Close'] >= today['Typical_Price']) and is_strong_close
+            i_c3 = (today['Close'] > today['VWAP_5D']) and (today['MA20'] >= today['MA50'])
+            i_c4 = (today['Close'] > today['Open']) and (0 < pct_chg_today <= max_gain_intra) and is_not_overextended and is_pre_breakout_zone
             i_score = sum([i_c1, i_c2, i_c3, i_c4])
             
             sl_i, tp_i, safe_i, lot_i, modal_i = calc_position_sizing(entry_price, atr_val, intra_sl_mult, intra_tp_mult, modal_trading, max_risk_idr, intra_safe_mult)
@@ -394,6 +450,7 @@ def run_unified_scanner(ticker_list, time_factor):
                 "Ticker": ticker,
                 "Harga Entry": int(entry_price),
                 "Change (%)": round(pct_chg_today, 2),
+                "Jarak Res 20D (%)": f"{dist_to_res_pct:+.2f}%",
                 "Harga VWAP": int(round(today['Typical_Price'])),
                 "Adj RVOL (x)": round(adj_rvol, 2),
                 "ATR 14 (Rp)": int(round(atr_val)),
@@ -415,12 +472,15 @@ def run_unified_scanner(ticker_list, time_factor):
     return pd.DataFrame(res_map), pd.DataFrame(res_rev), pd.DataFrame(res_intra)
 
 # -----------------------------------------------------------------------------
-# 6. TOMBOL EKSEKUSI TUNGGAL & TAMPILAN 4 TAB TERPADU (BAKU + PAPER TRADING)
+# 6. TOMBOL EKSEKUSI TUNGGAL & TAMPILAN 4 TAB TERPADU
 # -----------------------------------------------------------------------------
+# Pastikan state virtual selalu dimuat sejak awal aplikasi dibuka
+u_paper = load_paper_db()
+
 if "scan_results" not in st.session_state:
     st.session_state["scan_results"] = None
 
-if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_container_width=True):
+if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi + Filter Resistance)", use_container_width=True):
     hari_indo = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
     now_wib = datetime.now(timezone(timedelta(hours=7)))
     waktu_lengkap = f"{hari_indo[now_wib.weekday()]}, {now_wib.strftime('%d-%m-%Y %H:%M:%S')} WIB"
@@ -434,30 +494,41 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi Sekaligus)", use_c
         "waktu": waktu_lengkap
     }
 
+# Jika belum scan hari ini tapi ada posisi aktif dari kemarin, tetap tampilkan Tab 4 agar langsung terlihat
+if st.session_state["scan_results"] is None and (len(u_paper["positions"]) > 0 or len(u_paper["history"]) > 0):
+    st.warning("📂 Ditemukan Posisi Saham Virtual Aktif dari sesi sebelumnya. Tekan tombol pemindaian di atas untuk sinyal hari ini, atau pantau posisi aktif Anda di bawah:")
+
 if st.session_state["scan_results"] is not None:
     res_data = st.session_state["scan_results"]
     df_map = res_data["df_map"]
     df_rev = res_data["df_rev"]
     df_intra = res_data["df_intra"]
     
+    # Deteksi Double Signal (Lolos 4/4 di Map dan Intraday sekaligus)
+    map_4_tickers = set(df_map[(df_map['Skor'] == 4) & (df_map['Freq_Raw'] >= min_freq_map)]['Ticker']) if not df_map.empty else set()
+    intra_4_tickers = set(df_intra[df_intra['Skor'] == 4]['Ticker']) if not df_intra.empty else set()
+    double_signals = map_4_tickers.intersection(intra_4_tickers)
+    
     st.info(f"Pemindaian Selesai | Modal: **Rp {modal_trading:,.0f}** | Batas Rugi/Trade: **Rp {max_risk_idr:,.0f}** | Waktu: **{res_data['waktu']}**")
+    if double_signals:
+        st.success(f"🔥 **DOUBLE SIGNAL TERDETEKSI (Lolos Ketat Breakout & Intraday):** **{', '.join(double_signals)}**")
     
     if not df_map.empty:
         tab1, tab2, tab3, tab4 = st.tabs([
             "📈 1. QUANT-MAP (Breakout)", 
             "🔄 2. QUANT-REVERSION (Oversold)", 
-            "⚡ 3. QUANT-INTRADAY (Early Momentum)",
-            "💼 4. PAPER TRADING (Virtual)"
+            "⚡ 3. QUANT-INTRADAY (Siap Resistance)",
+            f"💼 4. PAPER TRADING ({len(u_paper['positions'])} Aktif)"
         ])
         
         with tab1:
             df_m_perf = df_map[(df_map['Skor'] == 4) & (df_map['Freq_Raw'] >= min_freq_map)].copy()
             if not df_m_perf.empty:
-                st.success(f"🎯 {len(df_m_perf)} Saham Lolos Sinyal Breakout 4/4:")
+                st.success(f"🎯 {len(df_m_perf)} Saham Lolos Sinyal Pre-Breakout Resistance 4/4:")
                 df_m_perf['Skor'] = df_m_perf['Skor'].astype(str) + "/4"
                 st.dataframe(df_m_perf.drop(columns=['Freq_Raw']), use_container_width=True)
             else:
-                st.warning("⚠️ Belum ada sinyal Breakout 4/4 hari ini. Menampilkan Top 10 Fallback:")
+                st.warning("⚠️ Belum ada saham yang memenuhi syarat ketat Pre-Breakout 4/4 saat ini. Top 10 Pantauan:")
                 df_m_fb = df_map.sort_values(by=["Skor", "Change (%)"], ascending=[False, False]).head(10).drop(columns=['Freq_Raw'])
                 df_m_fb['Skor'] = df_m_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_m_fb, use_container_width=True)
@@ -477,16 +548,15 @@ if st.session_state["scan_results"] is not None:
         with tab3:
             df_i_perf = df_intra[df_intra['Skor'] == 4].sort_values(by="Adj RVOL (x)", ascending=False).copy()
             if not df_i_perf.empty:
-                st.success(f"🎯 {len(df_i_perf)} Saham Lolos Sinyal Early Momentum (Naik ≤ {max_gain_intra}%) 4/4:")
+                st.success(f"🎯 {len(df_i_perf)} Saham Lolos Sinyal Ketat Siap Resistance (Naik ≤ {max_gain_intra}%) 4/4:")
                 df_i_perf['Skor'] = df_i_perf['Skor'].astype(str) + "/4"
                 st.dataframe(df_i_perf, use_container_width=True)
             else:
-                st.warning("⚠️ Belum ada sinyal Early Momentum 4/4 saat ini. Menampilkan Top 10 Adj RVOL Tertinggi:")
+                st.warning("⚠️ Belum ada sinyal ketat Siap Resistance 4/4 saat ini. Menampilkan Top 10 Adj RVOL Tertinggi:")
                 df_i_fb = df_intra.sort_values(by=["Skor", "Adj RVOL (x)"], ascending=[False, False]).head(10)
                 df_i_fb['Skor'] = df_i_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_i_fb, use_container_width=True)
                 
-        # TAB 4: SIMULASI PAPER TRADING + BACKUP/RESTORE ANTI-HILANG
         with tab4:
             u_paper = load_paper_db()
             col_p1, col_p2, col_p3, col_p4 = st.columns(4)
@@ -505,8 +575,9 @@ if st.session_state["scan_results"] is not None:
             for _, row in df_map[(df_map['Skor'] == 4) & (df_map['Freq_Raw'] >= min_freq_map)].iterrows():
                 lot_num = int(str(row["Rekomendasi Lot"]).split()[0])
                 if lot_num > 0:
+                    tag = "🔥 DOUBLE | " if row['Ticker'] in double_signals else ""
                     kandidat_order.append({
-                        "label": f"[Quant-Map] {row['Ticker']} | Entry: Rp {row['Harga Entry']:,} | {lot_num} Lot | TP: {row[f'TP ATR ({map_tp_mult}x)']} | SL: {row[f'SL ATR ({map_sl_mult}x)']}",
+                        "label": f"{tag}[Quant-Map] {row['Ticker']} | Entry: Rp {row['Harga Entry']:,} | {lot_num} Lot | TP: {row[f'TP ATR ({map_tp_mult}x)']} | SL: {row[f'SL ATR ({map_sl_mult}x)']}",
                         "ticker": row["Ticker"], "strategy": "Quant-Map", "entry": row["Harga Entry"],
                         "lot": lot_num, "tp": row[f"TP ATR ({map_tp_mult}x)"], "sl": row[f"SL ATR ({map_sl_mult}x)"]
                     })
@@ -521,8 +592,9 @@ if st.session_state["scan_results"] is not None:
             for _, row in df_intra[df_intra['Skor'] == 4].iterrows():
                 lot_num = int(str(row["Rekomendasi Lot"]).split()[0])
                 if lot_num > 0:
+                    tag = "🔥 DOUBLE | " if row['Ticker'] in double_signals else ""
                     kandidat_order.append({
-                        "label": f"[Quant-Intraday] {row['Ticker']} | Entry: Rp {row['Harga Entry']:,} | {lot_num} Lot | Profit Aman: {row[f'Profit Aman ({intra_safe_mult}x)']} | SL: {row[f'SL Ketat ({intra_sl_mult}x)']}",
+                        "label": f"{tag}[Quant-Intraday] {row['Ticker']} | Entry: Rp {row['Harga Entry']:,} | {lot_num} Lot | Profit Aman: {row[f'Profit Aman ({intra_safe_mult}x)']} | SL: {row[f'SL Ketat ({intra_sl_mult}x)']}",
                         "ticker": row["Ticker"], "strategy": "Quant-Intraday", "entry": row["Harga Entry"],
                         "lot": lot_num, "tp": row[f"Profit Aman ({intra_safe_mult}x)"], "sl": row[f"SL Ketat ({intra_sl_mult}x)"]
                     })
@@ -575,7 +647,7 @@ if st.session_state["scan_results"] is not None:
             u_paper = load_paper_db()
             if u_paper["positions"]:
                 for idx_p, p in enumerate(u_paper["positions"]):
-                    st.markdown(f"**{p['ticker']}** ({p['strategy']}) — Entry: **Rp {p['entry_price']:,}** | **{p['lot']} Lot** | TP: **Rp {p['tp_price']:,}** | SL: **Rp {p['sl_price']:,}**")
+                    st.markdown(f"**{p['ticker']}** ({p['strategy']}) — Entry: **Rp {p['entry_price']:,}** | **{p['lot']} Lot** | Modal Terpakai: **Rp {p['buy_cost']:,}** | TP: **Rp {p['tp_price']:,}** | SL: **Rp {p['sl_price']:,}**")
                     if st.button(f"🔴 Tutup Posisi {p['ticker']} @Entry", key=f"sell_{p['id']}"):
                         execute_paper_sell(idx_p, p["entry_price"], "Tutup Manual")
                         st.rerun()
@@ -590,9 +662,9 @@ if st.session_state["scan_results"] is not None:
                 st.caption("Belum ada transaksi yang ditutup.")
                 
             st.markdown("---")
-            st.subheader("💾 Simpan / Pulihkan Catatan Jurnal (Anti-Reset Server)")
+            st.subheader("💾 Cadangan & Pemulihan Jurnal (.json)")
             st.download_button(
-                label="⬇️ Unduh Backup Jurnal & Posisi Aktif (.json)",
+                label="⬇️ Unduh File Backup Jurnal (.json)",
                 data=json.dumps(u_paper, indent=2),
                 file_name=f"jurnal_quant_{datetime.now(timezone(timedelta(hours=7))).strftime('%Y%m%d')}.json",
                 mime="application/json",
@@ -624,12 +696,24 @@ if st.session_state["scan_results"] is not None:
                 st.rerun()
     else:
         st.error("Tidak ada saham yang memenuhi filter Minimum Daily Value.")
+else:
+    # Tampilkan ringkasan dana terpakai & posisi aktif meskipun tombol pemindaian belum ditekan pagi ini
+    if len(u_paper["positions"]) > 0 or len(u_paper["history"]) > 0:
+        st.markdown("---")
+        st.subheader("💼 Status Portofolio Virtual Tersimpan")
+        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        invested_val = sum(p["buy_cost"] for p in u_paper["positions"])
+        total_realized = sum(h["Net P/L (Rp)"] for h in u_paper["history"])
+        col_p1.metric("Modal Awal Simulasi", f"Rp {u_paper['initial_capital']:,.0f}")
+        col_p2.metric("Saldo RDN Virtual", f"Rp {u_paper['cash']:,.0f}")
+        col_p3.metric("Dana di Posisi Aktif", f"Rp {invested_val:,.0f}")
+        col_p4.metric("Total Realized P/L", f"Rp {total_realized:+,.0f}")
+        if u_paper["positions"]:
+            for p in u_paper["positions"]:
+                st.markdown(f"• **{p['ticker']}** ({p['strategy']}) — Entry: **Rp {p['entry_price']:,}** | **{p['lot']} Lot** | Terpakai: **Rp {p['buy_cost']:,}** | TP: **Rp {p['tp_price']:,}** | SL: **Rp {p['sl_price']:,}**")
 
 # -----------------------------------------------------------------------------
 # FOOTER & LISENSI
 # -----------------------------------------------------------------------------
 st.markdown("---")
 st.markdown("<center><small>SAHAM-QUANT-SUITE MASTER EDITION | Core Quantitative Engine | Licensed to Rommy Sanjaya</small></center>", unsafe_allow_html=True)
-
-    
-                                                    
