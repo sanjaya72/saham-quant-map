@@ -139,6 +139,15 @@ TF_CONFIG = {
     "Monthly": {"period": "5y", "interval": "1mo", "tail": 60, "fmt": "%b %Y", "intraday": False}
 }
 
+def buat_label_opsi(row, col_tp, col_sl):
+    skor = row['Skor']
+    prefix = "🎯 [4/4] " if skor == 4 else f"[{skor}/4] "
+    ticker = row['Ticker']
+    entry = row['Harga Entry']
+    tp = row[col_tp]
+    sl = row[col_sl]
+    return f"{prefix}{ticker} — Open: Rp {entry:,} | TP: Rp {tp:,} | SL: Rp {sl:,}"
+
 def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafik Candle", default_tf="Daily", widget_key="tf_default"):
     tf_list = list(TF_CONFIG.keys())
     default_idx = tf_list.index(default_tf) if default_tf in tf_list else 3
@@ -612,14 +621,16 @@ if st.session_state["scan_results"] is not None:
                 st.dataframe(df_m_fb, use_container_width=True)
             
             df_m_sorted = df_map.sort_values(by=["Skor", "Change (%)"], ascending=[False, False]).reset_index(drop=True)
+            col_tp_m = f"TP ATR ({map_tp_mult}x)"
+            col_sl_m = f"SL ATR ({map_sl_mult}x)"
             pilihan_m_idx = st.selectbox(
                 "📊 Pilih Saham untuk Lihat Grafik Candle (Open, TP & SL):",
                 range(len(df_m_sorted)),
-                format_func=lambda i: f"{'🎯 [4/4] ' if df_m_sorted.loc[i, 'Skor'] == 4 else f'[{df_m_sorted.loc[i, \"Skor\"]}/4] '}{df_m_sorted.loc[i, 'Ticker']} — Open: Rp {df_m_sorted.loc[i, 'Harga Entry']:,} | TP: Rp {df_m_sorted.loc[i, f'TP ATR ({map_tp_mult}x)']:,} | SL: Rp {df_m_sorted.loc[i, f'SL ATR ({map_sl_mult}x)']:,}",
+                format_func=lambda i: buat_label_opsi(df_m_sorted.iloc[i], col_tp_m, col_sl_m),
                 key="grafik_m_all"
             )
             row_m = df_m_sorted.iloc[pilihan_m_idx]
-            tampilkan_grafik_candle(row_m['Ticker'], row_m['Harga Entry'], row_m[f"TP ATR ({map_tp_mult}x)"], row_m[f"SL ATR ({map_sl_mult}x)"], f"Quant-Map ({row_m['Skor']}/4)", default_tf="Daily", widget_key="tf_map")
+            tampilkan_grafik_candle(row_m['Ticker'], row_m['Harga Entry'], row_m[col_tp_m], row_m[col_sl_m], f"Quant-Map ({row_m['Skor']}/4)", default_tf="Daily", widget_key="tf_map")
                 
         with tab2:
             df_r_perf = df_rev[df_rev['Skor'] == 4].sort_values(by="RSI-2", ascending=True).copy()
@@ -635,14 +646,16 @@ if st.session_state["scan_results"] is not None:
                 st.dataframe(df_r_fb, use_container_width=True)
             
             df_r_sorted = df_rev.sort_values(by=["Skor", "RSI-2"], ascending=[False, True]).reset_index(drop=True)
+            col_tp_r = f"TP ATR ({rev_tp_mult}x)"
+            col_sl_r = f"SL ATR ({rev_sl_mult}x)"
             pilihan_r_idx = st.selectbox(
                 "📊 Pilih Saham untuk Lihat Grafik Candle (Open, TP & SL):",
                 range(len(df_r_sorted)),
-                format_func=lambda i: f"{'🎯 [4/4] ' if df_r_sorted.loc[i, 'Skor'] == 4 else f'[{df_r_sorted.loc[i, \"Skor\"]}/4] '}{df_r_sorted.loc[i, 'Ticker']} — Open: Rp {df_r_sorted.loc[i, 'Harga Entry']:,} | TP: Rp {df_r_sorted.loc[i, f'TP ATR ({rev_tp_mult}x)']:,} | SL: Rp {df_r_sorted.loc[i, f'SL ATR ({rev_sl_mult}x)']:,}",
+                format_func=lambda i: buat_label_opsi(df_r_sorted.iloc[i], col_tp_r, col_sl_r),
                 key="grafik_r_all"
             )
             row_r = df_r_sorted.iloc[pilihan_r_idx]
-            tampilkan_grafik_candle(row_r['Ticker'], row_r['Harga Entry'], row_r[f"TP ATR ({rev_tp_mult}x)"], row_r[f"SL ATR ({rev_sl_mult}x)"], f"Quant-Reversion ({row_r['Skor']}/4)", default_tf="Daily", widget_key="tf_rev")
+            tampilkan_grafik_candle(row_r['Ticker'], row_r['Harga Entry'], row_r[col_tp_r], row_r[col_sl_r], f"Quant-Reversion ({row_r['Skor']}/4)", default_tf="Daily", widget_key="tf_rev")
                 
         with tab3:
             df_i_perf = df_intra[df_intra['Skor'] == 4].sort_values(by="Adj RVOL (x)", ascending=False).copy()
@@ -658,14 +671,16 @@ if st.session_state["scan_results"] is not None:
                 st.dataframe(df_i_fb, use_container_width=True)
             
             df_i_sorted = df_intra.sort_values(by=["Skor", "Adj RVOL (x)"], ascending=[False, False]).reset_index(drop=True)
+            col_tp_i = f"Profit Aman ({intra_safe_mult}x)"
+            col_sl_i = f"SL Ketat ({intra_sl_mult}x)"
             pilihan_i_idx = st.selectbox(
                 "📊 Pilih Saham untuk Lihat Grafik Candle (Open, TP & SL):",
                 range(len(df_i_sorted)),
-                format_func=lambda i: f"{'🎯 [4/4] ' if df_i_sorted.loc[i, 'Skor'] == 4 else f'[{df_i_sorted.loc[i, \"Skor\"]}/4] '}{df_i_sorted.loc[i, 'Ticker']} — Open: Rp {df_i_sorted.loc[i, 'Harga Entry']:,} | TP: Rp {df_i_sorted.loc[i, f'Profit Aman ({intra_safe_mult}x)']:,} | SL: Rp {df_i_sorted.loc[i, f'SL Ketat ({intra_sl_mult}x)']:,}",
+                format_func=lambda i: buat_label_opsi(df_i_sorted.iloc[i], col_tp_i, col_sl_i),
                 key="grafik_i_all"
             )
             row_i = df_i_sorted.iloc[pilihan_i_idx]
-            tampilkan_grafik_candle(row_i['Ticker'], row_i['Harga Entry'], row_i[f"Profit Aman ({intra_safe_mult}x)"], row_i[f"SL Ketat ({intra_sl_mult}x)"], f"Quant-Intraday ({row_i['Skor']}/4)", default_tf="Daily", widget_key="tf_intra")
+            tampilkan_grafik_candle(row_i['Ticker'], row_i['Harga Entry'], row_i[col_tp_i], row_i[col_sl_i], f"Quant-Intraday ({row_i['Skor']}/4)", default_tf="Daily", widget_key="tf_intra")
                 
         with tab4:
             u_paper = load_paper_db()
