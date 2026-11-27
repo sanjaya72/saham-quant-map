@@ -2,6 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 import json
 import os
 import base64
@@ -17,7 +18,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Sembunyikan menu pengembang, tombol deploy, dan ikon GitHub, pertahankan tombol Sidebar (>)
 hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
@@ -66,7 +66,7 @@ st.markdown(LOGO_SVG_HEADER, unsafe_allow_html=True)
 st.caption("3-in-1 Quantitative Trading System + Persistent Virtual Lab | Direct Access Mode | Licensed to **Rommy Sanjaya**")
 
 # -----------------------------------------------------------------------------
-# 2. DAFTAR TICKER UNIVERSE GABUNGAN (BAKU - TOP 10 + LQ45 + TOP 100 IDX)
+# 2. DAFTAR TICKER UNIVERSE GABUNGAN (BAKU - 78 EMITEN)
 # -----------------------------------------------------------------------------
 TICKERS_GABUNGAN = list(set([
     "BBCA", "BBRI", "BMRI", "TLKM", "ASII", "TPIA", "BREN", "AMMN", "ICBP", "BYAN",
@@ -128,7 +128,94 @@ with st.sidebar.expander("3️⃣ Setting Quant-Intraday (Early Entry)", expande
     intra_tp_mult = st.number_input("TP Max Pengali ATR", 0.8, 4.0, 1.5, 0.1, key="intra_tp")
 
 # -----------------------------------------------------------------------------
-# 4. DATABASE PAPER TRADING PERMANEN (URL STATE + LOCAL FILE + BACKUP)
+# 4. MODUL GRAFIK CANDLESTICK MULTI-TIMEFRAME (M5, M15, 1H, DAILY, WEEKLY, MONTHLY)
+# -----------------------------------------------------------------------------
+TF_CONFIG = {
+    "M5": {"period": "5d", "interval": "5m", "tail": 70, "fmt": "%d/%m %H:%M", "intraday": True},
+    "M15": {"period": "5d", "interval": "15m", "tail": 65, "fmt": "%d/%m %H:%M", "intraday": True},
+    "1H": {"period": "1mo", "interval": "60m", "tail": 65, "fmt": "%d/%m %H:%M", "intraday": True},
+    "Daily": {"period": "6mo", "interval": "1d", "tail": 60, "fmt": "%d %b", "intraday": False},
+    "Weekly": {"period": "2y", "interval": "1wk", "tail": 60, "fmt": "%d %b %y", "intraday": False},
+    "Monthly": {"period": "5y", "interval": "1mo", "tail": 60, "fmt": "%b %Y", "intraday": False}
+}
+
+def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafik Candle", default_tf="Daily", widget_key="tf_default"):
+    tf_list = list(TF_CONFIG.keys())
+    default_idx = tf_list.index(default_tf) if default_tf in tf_list else 3
+    selected_tf = st.radio(
+        f"⏱️ Timeframe ({ticker}.JK):",
+        tf_list,
+        index=default_idx,
+        horizontal=True,
+        key=widget_key
+    )
+    cfg = TF_CONFIG[selected_tf]
+    
+    try:
+        df_g = yf.download(f"{ticker}.JK", period=cfg["period"], interval=cfg["interval"], progress=False)
+        if isinstance(df_g.columns, pd.MultiIndex):
+            df_g.columns = df_g.columns.get_level_values(0)
+        df_g = df_g[df_g['Volume'] > 0].copy()
+        if df_g.empty:
+            st.warning(f"Data candle {selected_tf} untuk {ticker} belum tersedia.")
+            return
+
+        res_20d = None
+        if not cfg["intraday"]:
+            df_g['MA20'] = df_g['Close'].rolling(20).mean()
+            df_g['MA50'] = df_g['Close'].rolling(50).mean()
+            if selected_tf == "Daily" and len(df_g) >= 21:
+                res_20d = float(df_g['High'].shift(1).rolling(20).max().iloc[-1])
+
+        df_plot = df_g.tail(cfg["tail"])
+        sumbu_x = df_plot.index.strftime(cfg["fmt"])
+
+        fig = go.Figure()
+        fig.add_trace(go.Candlestick(
+            x=sumbu_x,
+            open=df_plot['Open'],
+            high=df_plot['High'],
+            low=df_plot['Low'],
+            close=df_plot['Close'],
+            name=ticker,
+            increasing_line_color='#10b981',
+            decreasing_line_color='#ef4444'
+        ))
+
+        if not cfg["intraday"]:
+            fig.add_trace(go.Scatter(x=sumbu_x, y=df_plot['MA20'], mode='lines', name='MA20', line=dict(color='#38bdf8', width=1.2)))
+            fig.add_trace(go.Scatter(x=sumbu_x, y=df_plot['MA50'], mode='lines', name='MA50', line=dict(color='#f59e0b', width=1.2)))
+            if res_20d and not np.isnan(res_20d):
+                fig.add_hline(y=res_20d, line_dash="dot", line_color="#a855f7", line_width=1.4,
+                              annotation_text=f"Res 20D: {int(round(res_20d)):,}", annotation_position="top left")
+
+        # Garis TP, Open/Entry, dan SL
+        fig.add_hline(y=tp_price, line_dash="dash", line_color="#10b981", line_width=2,
+                      annotation_text=f"TP: Rp {tp_price:,}", annotation_position="top right")
+        fig.add_hline(y=open_price, line_dash="solid", line_color="#3b82f6", line_width=2,
+                      annotation_text=f"OPEN: Rp {open_price:,}", annotation_position="bottom right")
+        fig.add_hline(y=sl_price, line_dash="dash", line_color="#ef4444", line_width=2,
+                      annotation_text=f"SL: Rp {sl_price:,}", annotation_position="bottom left")
+
+        y_min = min(float(df_plot['Low'].min()), sl_price) * 0.985
+        y_max = max(float(df_plot['High'].max()), tp_price) * 1.015
+
+        fig.update_layout(
+            title=dict(text=f"📊 {judul}: {ticker}.JK [{selected_tf}]", font=dict(size=14)),
+            template="plotly_dark",
+            xaxis_rangeslider_visible=False,
+            height=390,
+            margin=dict(l=10, r=10, t=40, b=10),
+            yaxis=dict(range=[y_min, y_max], side="right"),
+            xaxis=dict(nticks=8),
+            legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception:
+        pass
+
+# -----------------------------------------------------------------------------
+# 5. DATABASE PAPER TRADING PERMANEN (BAKU)
 # -----------------------------------------------------------------------------
 PAPER_FILE = "paper_trades_direct.json"
 
@@ -155,18 +242,15 @@ def decode_state_from_url():
     return None
 
 def load_paper_db():
-    # 1. Prioritaskan pembacaan dari URL Browser (Anti-Reset saat server Streamlit tidur)
     url_data = decode_state_from_url()
     if url_data is not None:
         st.session_state["paper_db_cache"] = url_data
         return url_data
 
-    # 2. Cek memori sesi aktif
     if "paper_db_cache" in st.session_state:
         encode_state_to_url(st.session_state["paper_db_cache"])
         return st.session_state["paper_db_cache"]
 
-    # 3. Cek file lokal server
     if os.path.exists(PAPER_FILE):
         try:
             with open(PAPER_FILE, "r") as f:
@@ -178,7 +262,6 @@ def load_paper_db():
         except Exception:
             pass
 
-    # 4. Inisialisasi baru default Rp 10.000.000
     default_paper = {
         "initial_capital": int(modal_trading),
         "cash": int(modal_trading),
@@ -251,7 +334,7 @@ def execute_paper_sell(pos_index, exit_price, reason="Manual Close"):
     return net_pnl
 
 # -----------------------------------------------------------------------------
-# 5. FUNGSI INDIKATOR TEKNIKAL & MESIN PEMINDAI TERPADU + PRE-BREAKOUT FILTER
+# 6. FUNGSI INDIKATOR TEKNIKAL & MESIN PEMINDAI TERPADU (BAKU)
 # -----------------------------------------------------------------------------
 def get_intraday_time_factor(now_wib):
     if now_wib.weekday() >= 5:
@@ -336,7 +419,6 @@ def run_unified_scanner(ticker_list, time_factor):
             df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
             df['VWAP_5D'] = (df['Typical_Price'] * df['Volume']).rolling(5).sum() / df['Volume'].rolling(5).sum()
             
-            # Indikator Struktur Resistance & Anti-Pucuk
             df['Res_20D'] = df['High'].shift(1).rolling(20).max()
             df['Gain_3D'] = ((df['Close'] - df['Close'].shift(3)) / df['Close'].shift(3)) * 100
             
@@ -351,14 +433,12 @@ def run_unified_scanner(ticker_list, time_factor):
             if entry_price < 50 or total_value < adj_min_val or np.isnan(atr_val):
                 continue
 
-            # Hitung posisi candle & jarak ke Resistance 20 Hari
             candle_range = max(1.0, float(today['High'] - today['Low']))
             close_pos = (entry_price - float(today['Low'])) / candle_range
             res_20d = float(today['Res_20D']) if not np.isnan(today['Res_20D']) else entry_price
             dist_to_res_pct = ((entry_price - res_20d) / res_20d) * 100
             gain_3d = float(today['Gain_3D']) if not np.isnan(today['Gain_3D']) else pct_chg_today
 
-            # Gatekeeper Ketat Pre-Breakout (Awal posisi siap tembus resistance, bukan di pucuk)
             is_pre_breakout_zone = (-2.5 <= dist_to_res_pct <= 1.5)
             is_not_overextended = (gain_3d <= 4.5)
             is_strong_close = (close_pos >= 0.70)
@@ -366,7 +446,7 @@ def run_unified_scanner(ticker_list, time_factor):
                 
             df_200 = df.tail(200).copy()
             
-            # A. QUANT-MAP (Diperketat dengan Gatekeeper Pre-Breakout)
+            # A. QUANT-MAP
             m_c1 = today['Close'] > today['MA20']
             m_c2 = today['MA20'] >= today['MA50']
             m_c3 = (today['Volume'] / time_factor) > today['Avg_Vol20']
@@ -401,7 +481,7 @@ def run_unified_scanner(ticker_list, time_factor):
                 "Freq_Raw": freq_spike
             })
             
-            # B. QUANT-REVERSION (BAKU)
+            # B. QUANT-REVERSION
             r_c1 = today['Close'] > today['MA200']
             r_c2 = today['RSI2'] <= rsi_limit_rev
             r_c3 = today['Close'] <= (today['Lower_BB'] * 1.01)
@@ -434,7 +514,7 @@ def run_unified_scanner(ticker_list, time_factor):
                 "Modal Terpakai (Rp)": modal_r
             })
             
-            # C. QUANT-INTRADAY (Diperketat dengan Zona Siap Resistance, Strong Candle & Trend Alignment)
+            # C. QUANT-INTRADAY
             adj_rvol = float(today['RVOL']) / time_factor
             i_c1 = adj_rvol >= rvol_limit_intra
             i_c2 = (today['Close'] >= today['Typical_Price']) and is_strong_close
@@ -472,9 +552,8 @@ def run_unified_scanner(ticker_list, time_factor):
     return pd.DataFrame(res_map), pd.DataFrame(res_rev), pd.DataFrame(res_intra)
 
 # -----------------------------------------------------------------------------
-# 6. TOMBOL EKSEKUSI TUNGGAL & TAMPILAN 4 TAB TERPADU
+# 7. TOMBOL EKSEKUSI TUNGGAL & TAMPILAN 4 TAB TERPADU (BAKU + GRAFIK 78 SAHAM)
 # -----------------------------------------------------------------------------
-# Pastikan state virtual selalu dimuat sejak awal aplikasi dibuka
 u_paper = load_paper_db()
 
 if "scan_results" not in st.session_state:
@@ -494,7 +573,6 @@ if st.button("🚀 Jalankan Pemindaian All-in-One (3 Strategi + Filter Resistanc
         "waktu": waktu_lengkap
     }
 
-# Jika belum scan hari ini tapi ada posisi aktif dari kemarin, tetap tampilkan Tab 4 agar langsung terlihat
 if st.session_state["scan_results"] is None and (len(u_paper["positions"]) > 0 or len(u_paper["history"]) > 0):
     st.warning("📂 Ditemukan Posisi Saham Virtual Aktif dari sesi sebelumnya. Tekan tombol pemindaian di atas untuk sinyal hari ini, atau pantau posisi aktif Anda di bawah:")
 
@@ -504,7 +582,6 @@ if st.session_state["scan_results"] is not None:
     df_rev = res_data["df_rev"]
     df_intra = res_data["df_intra"]
     
-    # Deteksi Double Signal (Lolos 4/4 di Map dan Intraday sekaligus)
     map_4_tickers = set(df_map[(df_map['Skor'] == 4) & (df_map['Freq_Raw'] >= min_freq_map)]['Ticker']) if not df_map.empty else set()
     intra_4_tickers = set(df_intra[df_intra['Skor'] == 4]['Ticker']) if not df_intra.empty else set()
     double_signals = map_4_tickers.intersection(intra_4_tickers)
@@ -525,37 +602,70 @@ if st.session_state["scan_results"] is not None:
             df_m_perf = df_map[(df_map['Skor'] == 4) & (df_map['Freq_Raw'] >= min_freq_map)].copy()
             if not df_m_perf.empty:
                 st.success(f"🎯 {len(df_m_perf)} Saham Lolos Sinyal Pre-Breakout Resistance 4/4:")
-                df_m_perf['Skor'] = df_m_perf['Skor'].astype(str) + "/4"
-                st.dataframe(df_m_perf.drop(columns=['Freq_Raw']), use_container_width=True)
+                df_m_show = df_m_perf.drop(columns=['Freq_Raw']).copy()
+                df_m_show['Skor'] = df_m_show['Skor'].astype(str) + "/4"
+                st.dataframe(df_m_show, use_container_width=True)
             else:
                 st.warning("⚠️ Belum ada saham yang memenuhi syarat ketat Pre-Breakout 4/4 saat ini. Top 10 Pantauan:")
                 df_m_fb = df_map.sort_values(by=["Skor", "Change (%)"], ascending=[False, False]).head(10).drop(columns=['Freq_Raw'])
                 df_m_fb['Skor'] = df_m_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_m_fb, use_container_width=True)
+            
+            df_m_sorted = df_map.sort_values(by=["Skor", "Change (%)"], ascending=[False, False]).reset_index(drop=True)
+            pilihan_m_idx = st.selectbox(
+                "📊 Pilih Saham untuk Lihat Grafik Candle (Open, TP & SL):",
+                range(len(df_m_sorted)),
+                format_func=lambda i: f"{'🎯 [4/4] ' if df_m_sorted.loc[i, 'Skor'] == 4 else f'[{df_m_sorted.loc[i, \"Skor\"]}/4] '}{df_m_sorted.loc[i, 'Ticker']} — Open: Rp {df_m_sorted.loc[i, 'Harga Entry']:,} | TP: Rp {df_m_sorted.loc[i, f'TP ATR ({map_tp_mult}x)']:,} | SL: Rp {df_m_sorted.loc[i, f'SL ATR ({map_sl_mult}x)']:,}",
+                key="grafik_m_all"
+            )
+            row_m = df_m_sorted.iloc[pilihan_m_idx]
+            tampilkan_grafik_candle(row_m['Ticker'], row_m['Harga Entry'], row_m[f"TP ATR ({map_tp_mult}x)"], row_m[f"SL ATR ({map_sl_mult}x)"], f"Quant-Map ({row_m['Skor']}/4)", default_tf="Daily", widget_key="tf_map")
                 
         with tab2:
             df_r_perf = df_rev[df_rev['Skor'] == 4].sort_values(by="RSI-2", ascending=True).copy()
             if not df_r_perf.empty:
                 st.success(f"🎯 {len(df_r_perf)} Saham Lolos Sinyal Pantulan Jenuh Jual 4/4:")
-                df_r_perf['Skor'] = df_r_perf['Skor'].astype(str) + "/4"
-                st.dataframe(df_r_perf, use_container_width=True)
+                df_r_show = df_r_perf.copy()
+                df_r_show['Skor'] = df_r_show['Skor'].astype(str) + "/4"
+                st.dataframe(df_r_show, use_container_width=True)
             else:
                 st.warning("⚠️ Belum ada sinyal Mean Reversion 4/4 hari ini. Menampilkan Top 10 Saham RSI-2 Terendah:")
                 df_r_fb = df_rev.sort_values(by=["Skor", "RSI-2"], ascending=[False, True]).head(10)
                 df_r_fb['Skor'] = df_r_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_r_fb, use_container_width=True)
+            
+            df_r_sorted = df_rev.sort_values(by=["Skor", "RSI-2"], ascending=[False, True]).reset_index(drop=True)
+            pilihan_r_idx = st.selectbox(
+                "📊 Pilih Saham untuk Lihat Grafik Candle (Open, TP & SL):",
+                range(len(df_r_sorted)),
+                format_func=lambda i: f"{'🎯 [4/4] ' if df_r_sorted.loc[i, 'Skor'] == 4 else f'[{df_r_sorted.loc[i, \"Skor\"]}/4] '}{df_r_sorted.loc[i, 'Ticker']} — Open: Rp {df_r_sorted.loc[i, 'Harga Entry']:,} | TP: Rp {df_r_sorted.loc[i, f'TP ATR ({rev_tp_mult}x)']:,} | SL: Rp {df_r_sorted.loc[i, f'SL ATR ({rev_sl_mult}x)']:,}",
+                key="grafik_r_all"
+            )
+            row_r = df_r_sorted.iloc[pilihan_r_idx]
+            tampilkan_grafik_candle(row_r['Ticker'], row_r['Harga Entry'], row_r[f"TP ATR ({rev_tp_mult}x)"], row_r[f"SL ATR ({rev_sl_mult}x)"], f"Quant-Reversion ({row_r['Skor']}/4)", default_tf="Daily", widget_key="tf_rev")
                 
         with tab3:
             df_i_perf = df_intra[df_intra['Skor'] == 4].sort_values(by="Adj RVOL (x)", ascending=False).copy()
             if not df_i_perf.empty:
                 st.success(f"🎯 {len(df_i_perf)} Saham Lolos Sinyal Ketat Siap Resistance (Naik ≤ {max_gain_intra}%) 4/4:")
-                df_i_perf['Skor'] = df_i_perf['Skor'].astype(str) + "/4"
-                st.dataframe(df_i_perf, use_container_width=True)
+                df_i_show = df_i_perf.copy()
+                df_i_show['Skor'] = df_i_show['Skor'].astype(str) + "/4"
+                st.dataframe(df_i_show, use_container_width=True)
             else:
                 st.warning("⚠️ Belum ada sinyal ketat Siap Resistance 4/4 saat ini. Menampilkan Top 10 Adj RVOL Tertinggi:")
                 df_i_fb = df_intra.sort_values(by=["Skor", "Adj RVOL (x)"], ascending=[False, False]).head(10)
                 df_i_fb['Skor'] = df_i_fb['Skor'].astype(str) + "/4"
                 st.dataframe(df_i_fb, use_container_width=True)
+            
+            df_i_sorted = df_intra.sort_values(by=["Skor", "Adj RVOL (x)"], ascending=[False, False]).reset_index(drop=True)
+            pilihan_i_idx = st.selectbox(
+                "📊 Pilih Saham untuk Lihat Grafik Candle (Open, TP & SL):",
+                range(len(df_i_sorted)),
+                format_func=lambda i: f"{'🎯 [4/4] ' if df_i_sorted.loc[i, 'Skor'] == 4 else f'[{df_i_sorted.loc[i, \"Skor\"]}/4] '}{df_i_sorted.loc[i, 'Ticker']} — Open: Rp {df_i_sorted.loc[i, 'Harga Entry']:,} | TP: Rp {df_i_sorted.loc[i, f'Profit Aman ({intra_safe_mult}x)']:,} | SL: Rp {df_i_sorted.loc[i, f'SL Ketat ({intra_sl_mult}x)']:,}",
+                key="grafik_i_all"
+            )
+            row_i = df_i_sorted.iloc[pilihan_i_idx]
+            tampilkan_grafik_candle(row_i['Ticker'], row_i['Harga Entry'], row_i[f"Profit Aman ({intra_safe_mult}x)"], row_i[f"SL Ketat ({intra_sl_mult}x)"], f"Quant-Intraday ({row_i['Skor']}/4)", default_tf="Daily", widget_key="tf_intra")
                 
         with tab4:
             u_paper = load_paper_db()
@@ -605,8 +715,10 @@ if st.session_state["scan_results"] is not None:
                     range(len(kandidat_order)),
                     format_func=lambda x: kandidat_order[x]["label"]
                 )
+                sel = kandidat_order[pilihan_idx]
+                tampilkan_grafik_candle(sel["ticker"], sel["entry"], sel["tp"], sel["sl"], f"Preview ({sel['strategy']})", default_tf="Daily", widget_key="tf_preview")
+                
                 if st.button("🟢 Eksekusi BUY Virtual", use_container_width=True):
-                    sel = kandidat_order[pilihan_idx]
                     ok, msg = execute_paper_buy(sel["ticker"], sel["strategy"], sel["entry"], sel["lot"], sel["tp"], sel["sl"])
                     if ok:
                         st.success(msg)
@@ -651,6 +763,15 @@ if st.session_state["scan_results"] is not None:
                     if st.button(f"🔴 Tutup Posisi {p['ticker']} @Entry", key=f"sell_{p['id']}"):
                         execute_paper_sell(idx_p, p["entry_price"], "Tutup Manual")
                         st.rerun()
+                
+                pos_idx_grafik = st.selectbox(
+                    "Grafik Posisi Aktif (Garis Open, TP & SL):",
+                    range(len(u_paper["positions"])),
+                    format_func=lambda i: f"{u_paper['positions'][i]['ticker']} ({u_paper['positions'][i]['strategy']}) — Open: Rp {u_paper['positions'][i]['entry_price']:,} | TP: Rp {u_paper['positions'][i]['tp_price']:,} | SL: Rp {u_paper['positions'][i]['sl_price']:,}",
+                    key="grafik_posisi_aktif"
+                )
+                p_aktif = u_paper["positions"][pos_idx_grafik]
+                tampilkan_grafik_candle(p_aktif["ticker"], p_aktif["entry_price"], p_aktif["tp_price"], p_aktif["sl_price"], f"Posisi Aktif ({p_aktif['strategy']})", default_tf="M15", widget_key="tf_aktif_tab4")
             else:
                 st.caption("Belum ada posisi saham virtual yang sedang terbuka.")
                 
@@ -697,7 +818,6 @@ if st.session_state["scan_results"] is not None:
     else:
         st.error("Tidak ada saham yang memenuhi filter Minimum Daily Value.")
 else:
-    # Tampilkan ringkasan dana terpakai & posisi aktif meskipun tombol pemindaian belum ditekan pagi ini
     if len(u_paper["positions"]) > 0 or len(u_paper["history"]) > 0:
         st.markdown("---")
         st.subheader("💼 Status Portofolio Virtual Tersimpan")
@@ -711,6 +831,15 @@ else:
         if u_paper["positions"]:
             for p in u_paper["positions"]:
                 st.markdown(f"• **{p['ticker']}** ({p['strategy']}) — Entry: **Rp {p['entry_price']:,}** | **{p['lot']} Lot** | Terpakai: **Rp {p['buy_cost']:,}** | TP: **Rp {p['tp_price']:,}** | SL: **Rp {p['sl_price']:,}**")
+            
+            pos_idx_saved = st.selectbox(
+                "Grafik Posisi Aktif (Garis Open, TP & SL):",
+                range(len(u_paper["positions"])),
+                format_func=lambda i: f"{u_paper['positions'][i]['ticker']} ({u_paper['positions'][i]['strategy']}) — Open: Rp {u_paper['positions'][i]['entry_price']:,} | TP: Rp {u_paper['positions'][i]['tp_price']:,} | SL: Rp {u_paper['positions'][i]['sl_price']:,}",
+                key="grafik_posisi_tersimpan"
+            )
+            p_saved = u_paper["positions"][pos_idx_saved]
+            tampilkan_grafik_candle(p_saved["ticker"], p_saved["entry_price"], p_saved["tp_price"], p_saved["sl_price"], f"Posisi Aktif ({p_saved['strategy']})", default_tf="M15", widget_key="tf_saved_pos")
 
 # -----------------------------------------------------------------------------
 # FOOTER & LISENSI
