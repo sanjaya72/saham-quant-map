@@ -128,7 +128,7 @@ with st.sidebar.expander("3️⃣ Setting Quant-Intraday (Early Entry)", expande
     intra_tp_mult = st.number_input("TP Max Pengali ATR", 0.8, 4.0, 1.5, 0.1, key="intra_tp")
 
 # -----------------------------------------------------------------------------
-# 4. MODUL GRAFIK CANDLESTICK MULTI-TIMEFRAME (M5, M15, 1H, DAILY, WEEKLY, MONTHLY)
+# 4. MODUL GRAFIK CANDLESTICK MULTI-TIMEFRAME (RAPI ANTI-BERTUMPUK DI HP)
 # -----------------------------------------------------------------------------
 TF_CONFIG = {
     "M5": {"period": "5d", "interval": "5m", "tail": 70, "fmt": "%d/%m %H:%M", "intraday": True},
@@ -210,16 +210,16 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
         y_max = max(float(df_plot['High'].max()), tp_price) * 1.015
 
         fig.update_layout(
-            title=dict(text=f"📊 {judul}: {ticker}.JK [{selected_tf}]", font=dict(size=14)),
+            title=dict(text=f"📊 {judul}: {ticker}.JK [{selected_tf}]", font=dict(size=14), x=0.01, y=0.96),
             template="plotly_dark",
             xaxis_rangeslider_visible=False,
-            height=390,
-            margin=dict(l=10, r=10, t=40, b=10),
+            height=420,
+            margin=dict(l=10, r=10, t=48, b=52),
             yaxis=dict(range=[y_min, y_max], side="right"),
             xaxis=dict(nticks=8),
-            legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0)
+            legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="center", x=0.5)
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     except Exception:
         pass
 
