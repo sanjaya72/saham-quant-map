@@ -129,15 +129,15 @@ with st.sidebar.expander("3️⃣ Setting Quant-Intraday (Early Entry)", expande
     intra_tp_mult = st.number_input("TP Max Pengali ATR", 0.8, 4.0, 1.5, 0.1, key="intra_tp")
 
 # -----------------------------------------------------------------------------
-# 4. MODUL GRAFIK CANDLESTICK TERMINAL PRO (VOLUME + ZONA TP/SL + ANTI-GESER)
+# 4. MODUL GRAFIK CANDLESTICK TERMINAL PRO (BISA GESER HISTORY + BEBAS TOOLTIP)
 # -----------------------------------------------------------------------------
 TF_CONFIG = {
-    "M5": {"period": "5d", "interval": "5m", "tail": 65, "fmt": "%d/%m %H:%M", "intraday": True},
-    "M15": {"period": "5d", "interval": "15m", "tail": 60, "fmt": "%d/%m %H:%M", "intraday": True},
-    "1H": {"period": "1mo", "interval": "60m", "tail": 60, "fmt": "%d/%m %H:%M", "intraday": True},
-    "Daily": {"period": "6mo", "interval": "1d", "tail": 55, "fmt": "%d %b", "intraday": False},
-    "Weekly": {"period": "2y", "interval": "1wk", "tail": 55, "fmt": "%d %b %y", "intraday": False},
-    "Monthly": {"period": "5y", "interval": "1mo", "tail": 55, "fmt": "%b %Y", "intraday": False}
+    "M5": {"period": "5d", "interval": "5m", "tail": 180, "view": 45, "fmt": "%d/%m %H:%M", "intraday": True},
+    "M15": {"period": "1mo", "interval": "15m", "tail": 180, "view": 45, "fmt": "%d/%m %H:%M", "intraday": True},
+    "1H": {"period": "3mo", "interval": "60m", "tail": 180, "view": 45, "fmt": "%d/%m %H:%M", "intraday": True},
+    "Daily": {"period": "1y", "interval": "1d", "tail": 180, "view": 45, "fmt": "%d %b", "intraday": False},
+    "Weekly": {"period": "5y", "interval": "1wk", "tail": 150, "view": 45, "fmt": "%d %b %y", "intraday": False},
+    "Monthly": {"period": "10y", "interval": "1mo", "tail": 120, "view": 45, "fmt": "%b %Y", "intraday": False}
 }
 
 def buat_label_opsi(row, col_tp, col_sl):
@@ -179,8 +179,11 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
 
         df_plot = df_g.tail(cfg["tail"]).copy()
         sumbu_x = df_plot.index.strftime(cfg["fmt"])
+        total_bars = len(df_plot)
+        view_bars = min(cfg["view"], total_bars)
+        x_start_idx = max(0, total_bars - view_bars)
+        x_end_idx = total_bars - 0.5
 
-        # Subplots: Panel Utama Harga (78%) + Panel Volume Bawah (22%)
         fig = make_subplots(
             rows=2, cols=1,
             shared_xaxes=True,
@@ -188,7 +191,7 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
             row_heights=[0.78, 0.22]
         )
 
-        # 1. Candlestick Tajam
+        # 1. Candlestick Tajam (Tanpa kotak popup putih yang menghalangi)
         fig.add_trace(go.Candlestick(
             x=sumbu_x,
             open=df_plot['Open'],
@@ -196,6 +199,7 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
             low=df_plot['Low'],
             close=df_plot['Close'],
             name=ticker,
+            hoverinfo="skip",
             increasing=dict(line=dict(color='#00e676', width=1.2), fillcolor='#00e676'),
             decreasing=dict(line=dict(color='#ff5252', width=1.2), fillcolor='#ff5252')
         ), row=1, col=1)
@@ -204,10 +208,12 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
         if not cfg["intraday"]:
             fig.add_trace(go.Scatter(
                 x=sumbu_x, y=df_plot['MA20'], mode='lines', name='MA20',
+                hoverinfo="skip",
                 line=dict(color='#38bdf8', width=1.5)
             ), row=1, col=1)
             fig.add_trace(go.Scatter(
                 x=sumbu_x, y=df_plot['MA50'], mode='lines', name='MA50',
+                hoverinfo="skip",
                 line=dict(color='#fbbf24', width=1.5)
             ), row=1, col=1)
 
@@ -220,6 +226,7 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
             x=sumbu_x,
             y=df_plot['Volume'],
             name='Volume',
+            hoverinfo="skip",
             marker_color=vol_colors,
             showlegend=False
         ), row=2, col=1)
@@ -278,13 +285,14 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
 
         fig.update_layout(
             title=dict(
-                text=f"<b>{ticker}.JK</b> &bull; {judul} [{selected_tf}]",
+                text=f"<b>{ticker}.JK</b> • {judul} [{selected_tf}]",
                 font=dict(size=14, color="#f8fafc"),
                 x=0.01, y=0.97
             ),
             paper_bgcolor="#0b1120",
             plot_bgcolor="#0f172a",
-            dragmode=False,
+            dragmode="pan",
+            hovermode=False,
             xaxis_rangeslider_visible=False,
             height=460,
             margin=dict(l=8, r=8, t=46, b=50),
@@ -293,11 +301,10 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
                 yanchor="top", y=-0.12,
                 xanchor="center", x=0.5,
                 font=dict(size=11, color="#cbd5e1")
-            ),
-            hovermode="x unified"
+            )
         )
 
-        # Kunci sumbu X & Y agar candle tidak tergeser saat halaman HP di-scroll
+        # Kunci sumbu Y agar candle tidak hilang ke atas/bawah, bebaskan sumbu X untuk geser kiri/kanan
         fig.update_yaxes(
             range=[y_min, y_max], side="right", fixedrange=True,
             gridcolor="rgba(51, 65, 85, 0.45)", tickfont=dict(size=10, color="#94a3b8"),
@@ -309,12 +316,12 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
             row=2, col=1
         )
         fig.update_xaxes(
-            nticks=7, fixedrange=True,
+            range=[x_start_idx, x_end_idx], nticks=6, fixedrange=False,
             gridcolor="rgba(51, 65, 85, 0.35)", tickfont=dict(size=10, color="#94a3b8"),
             row=1, col=1
         )
         fig.update_xaxes(
-            nticks=7, fixedrange=True,
+            range=[x_start_idx, x_end_idx], nticks=6, fixedrange=False,
             gridcolor="rgba(51, 65, 85, 0.35)", tickfont=dict(size=10, color="#94a3b8"),
             row=2, col=1
         )
@@ -322,8 +329,9 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
         st.plotly_chart(
             fig,
             use_container_width=True,
-            config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False}
+            config={"displayModeBar": False, "scrollZoom": False, "doubleClick": "reset"}
         )
+        st.caption("👈 Geser grafik ke kanan/kiri untuk melihat histori candle sebelumnya (ketuk 2x untuk kembali ke posisi terbaru).")
     except Exception:
         pass
 
