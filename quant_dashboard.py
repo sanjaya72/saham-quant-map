@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import json
 import os
 import base64
@@ -128,15 +129,15 @@ with st.sidebar.expander("3️⃣ Setting Quant-Intraday (Early Entry)", expande
     intra_tp_mult = st.number_input("TP Max Pengali ATR", 0.8, 4.0, 1.5, 0.1, key="intra_tp")
 
 # -----------------------------------------------------------------------------
-# 4. MODUL GRAFIK CANDLESTICK MULTI-TIMEFRAME (RAPI ANTI-BERTUMPUK DI HP)
+# 4. MODUL GRAFIK CANDLESTICK TERMINAL PRO (VOLUME + ZONA TP/SL + ANTI-GESER)
 # -----------------------------------------------------------------------------
 TF_CONFIG = {
-    "M5": {"period": "5d", "interval": "5m", "tail": 70, "fmt": "%d/%m %H:%M", "intraday": True},
-    "M15": {"period": "5d", "interval": "15m", "tail": 65, "fmt": "%d/%m %H:%M", "intraday": True},
-    "1H": {"period": "1mo", "interval": "60m", "tail": 65, "fmt": "%d/%m %H:%M", "intraday": True},
-    "Daily": {"period": "6mo", "interval": "1d", "tail": 60, "fmt": "%d %b", "intraday": False},
-    "Weekly": {"period": "2y", "interval": "1wk", "tail": 60, "fmt": "%d %b %y", "intraday": False},
-    "Monthly": {"period": "5y", "interval": "1mo", "tail": 60, "fmt": "%b %Y", "intraday": False}
+    "M5": {"period": "5d", "interval": "5m", "tail": 65, "fmt": "%d/%m %H:%M", "intraday": True},
+    "M15": {"period": "5d", "interval": "15m", "tail": 60, "fmt": "%d/%m %H:%M", "intraday": True},
+    "1H": {"period": "1mo", "interval": "60m", "tail": 60, "fmt": "%d/%m %H:%M", "intraday": True},
+    "Daily": {"period": "6mo", "interval": "1d", "tail": 55, "fmt": "%d %b", "intraday": False},
+    "Weekly": {"period": "2y", "interval": "1wk", "tail": 55, "fmt": "%d %b %y", "intraday": False},
+    "Monthly": {"period": "5y", "interval": "1mo", "tail": 55, "fmt": "%b %Y", "intraday": False}
 }
 
 def buat_label_opsi(row, col_tp, col_sl):
@@ -176,10 +177,18 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
             if selected_tf == "Daily" and len(df_g) >= 21:
                 res_20d = float(df_g['High'].shift(1).rolling(20).max().iloc[-1])
 
-        df_plot = df_g.tail(cfg["tail"])
+        df_plot = df_g.tail(cfg["tail"]).copy()
         sumbu_x = df_plot.index.strftime(cfg["fmt"])
 
-        fig = go.Figure()
+        # Subplots: Panel Utama Harga (78%) + Panel Volume Bawah (22%)
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.03,
+            row_heights=[0.78, 0.22]
+        )
+
+        # 1. Candlestick Tajam
         fig.add_trace(go.Candlestick(
             x=sumbu_x,
             open=df_plot['Open'],
@@ -187,39 +196,134 @@ def tampilkan_grafik_candle(ticker, open_price, tp_price, sl_price, judul="Grafi
             low=df_plot['Low'],
             close=df_plot['Close'],
             name=ticker,
-            increasing_line_color='#10b981',
-            decreasing_line_color='#ef4444'
-        ))
+            increasing=dict(line=dict(color='#00e676', width=1.2), fillcolor='#00e676'),
+            decreasing=dict(line=dict(color='#ff5252', width=1.2), fillcolor='#ff5252')
+        ), row=1, col=1)
 
+        # 2. Moving Averages (MA20 & MA50)
         if not cfg["intraday"]:
-            fig.add_trace(go.Scatter(x=sumbu_x, y=df_plot['MA20'], mode='lines', name='MA20', line=dict(color='#38bdf8', width=1.2)))
-            fig.add_trace(go.Scatter(x=sumbu_x, y=df_plot['MA50'], mode='lines', name='MA50', line=dict(color='#f59e0b', width=1.2)))
-            if res_20d and not np.isnan(res_20d):
-                fig.add_hline(y=res_20d, line_dash="dot", line_color="#a855f7", line_width=1.4,
-                              annotation_text=f"Res 20D: {int(round(res_20d)):,}", annotation_position="top left")
+            fig.add_trace(go.Scatter(
+                x=sumbu_x, y=df_plot['MA20'], mode='lines', name='MA20',
+                line=dict(color='#38bdf8', width=1.5)
+            ), row=1, col=1)
+            fig.add_trace(go.Scatter(
+                x=sumbu_x, y=df_plot['MA50'], mode='lines', name='MA50',
+                line=dict(color='#fbbf24', width=1.5)
+            ), row=1, col=1)
 
-        # Garis TP, Open/Entry, dan SL
-        fig.add_hline(y=tp_price, line_dash="dash", line_color="#10b981", line_width=2,
-                      annotation_text=f"TP: Rp {tp_price:,}", annotation_position="top right")
-        fig.add_hline(y=open_price, line_dash="solid", line_color="#3b82f6", line_width=2,
-                      annotation_text=f"OPEN: Rp {open_price:,}", annotation_position="bottom right")
-        fig.add_hline(y=sl_price, line_dash="dash", line_color="#ef4444", line_width=2,
-                      annotation_text=f"SL: Rp {sl_price:,}", annotation_position="bottom left")
+        # 3. Batang Volume Berwarna
+        vol_colors = [
+            'rgba(0, 230, 118, 0.65)' if c >= o else 'rgba(255, 82, 82, 0.65)'
+            for o, c in zip(df_plot['Open'], df_plot['Close'])
+        ]
+        fig.add_trace(go.Bar(
+            x=sumbu_x,
+            y=df_plot['Volume'],
+            name='Volume',
+            marker_color=vol_colors,
+            showlegend=False
+        ), row=2, col=1)
+
+        # 4. Arsiran Zona Reward (Open -> TP) dan Zona Risk (SL -> Open)
+        fig.add_hrect(
+            y0=open_price, y1=tp_price,
+            fillcolor="rgba(16, 185, 129, 0.08)", line_width=0,
+            row=1, col=1
+        )
+        fig.add_hrect(
+            y0=sl_price, y1=open_price,
+            fillcolor="rgba(239, 68, 68, 0.08)", line_width=0,
+            row=1, col=1
+        )
+
+        # 5. Garis Resistance 20D (Jika Harian)
+        if res_20d and not np.isnan(res_20d):
+            fig.add_hline(
+                y=res_20d, line_dash="dot", line_color="#c084fc", line_width=1.4,
+                annotation_text=f" Res 20D: {int(round(res_20d)):,} ",
+                annotation_position="top left",
+                annotation_font=dict(size=10, color="#f3e8ff"),
+                annotation_bgcolor="rgba(126, 34, 206, 0.75)",
+                row=1, col=1
+            )
+
+        # 6. Garis TP, OPEN, dan SL dengan Badge Label Kontras
+        fig.add_hline(
+            y=tp_price, line_dash="dash", line_color="#00e676", line_width=1.8,
+            annotation_text=f" 🎯 TP: Rp {tp_price:,} ",
+            annotation_position="top right",
+            annotation_font=dict(size=10, color="#ffffff"),
+            annotation_bgcolor="rgba(5, 150, 105, 0.88)",
+            row=1, col=1
+        )
+        fig.add_hline(
+            y=open_price, line_dash="solid", line_color="#60a5fa", line_width=1.8,
+            annotation_text=f" 🔵 OPEN: Rp {open_price:,} ",
+            annotation_position="bottom right",
+            annotation_font=dict(size=10, color="#ffffff"),
+            annotation_bgcolor="rgba(37, 99, 235, 0.88)",
+            row=1, col=1
+        )
+        fig.add_hline(
+            y=sl_price, line_dash="dash", line_color="#ff5252", line_width=1.8,
+            annotation_text=f" 🛡️ SL: Rp {sl_price:,} ",
+            annotation_position="bottom left",
+            annotation_font=dict(size=10, color="#ffffff"),
+            annotation_bgcolor="rgba(220, 38, 38, 0.88)",
+            row=1, col=1
+        )
 
         y_min = min(float(df_plot['Low'].min()), sl_price) * 0.985
         y_max = max(float(df_plot['High'].max()), tp_price) * 1.015
 
         fig.update_layout(
-            title=dict(text=f"📊 {judul}: {ticker}.JK [{selected_tf}]", font=dict(size=14), x=0.01, y=0.96),
-            template="plotly_dark",
+            title=dict(
+                text=f"<b>{ticker}.JK</b> &bull; {judul} [{selected_tf}]",
+                font=dict(size=14, color="#f8fafc"),
+                x=0.01, y=0.97
+            ),
+            paper_bgcolor="#0b1120",
+            plot_bgcolor="#0f172a",
+            dragmode=False,
             xaxis_rangeslider_visible=False,
-            height=420,
-            margin=dict(l=10, r=10, t=48, b=52),
-            yaxis=dict(range=[y_min, y_max], side="right"),
-            xaxis=dict(nticks=8),
-            legend=dict(orientation="h", yanchor="top", y=-0.16, xanchor="center", x=0.5)
+            height=460,
+            margin=dict(l=8, r=8, t=46, b=50),
+            legend=dict(
+                orientation="h",
+                yanchor="top", y=-0.12,
+                xanchor="center", x=0.5,
+                font=dict(size=11, color="#cbd5e1")
+            ),
+            hovermode="x unified"
         )
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+        # Kunci sumbu X & Y agar candle tidak tergeser saat halaman HP di-scroll
+        fig.update_yaxes(
+            range=[y_min, y_max], side="right", fixedrange=True,
+            gridcolor="rgba(51, 65, 85, 0.45)", tickfont=dict(size=10, color="#94a3b8"),
+            row=1, col=1
+        )
+        fig.update_yaxes(
+            side="right", fixedrange=True, showticklabels=False,
+            gridcolor="rgba(51, 65, 85, 0.25)",
+            row=2, col=1
+        )
+        fig.update_xaxes(
+            nticks=7, fixedrange=True,
+            gridcolor="rgba(51, 65, 85, 0.35)", tickfont=dict(size=10, color="#94a3b8"),
+            row=1, col=1
+        )
+        fig.update_xaxes(
+            nticks=7, fixedrange=True,
+            gridcolor="rgba(51, 65, 85, 0.35)", tickfont=dict(size=10, color="#94a3b8"),
+            row=2, col=1
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False}
+        )
     except Exception:
         pass
 
